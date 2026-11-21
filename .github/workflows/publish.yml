@@ -16,7 +16,7 @@ jobs:
       - name: Download app files
         run: |
           curl -fsSL -o index.html "https://cdn.omniultra.imagine.art/ceaed39a-684f-4da0-a1e9-ca9f91ee1c26/media/file/3b0f69cbec754bb4ada69111d0179561/uchet-index.html"
-          curl -fsSL -o app-core.js "https://cdn.omniultra.imagine.art/ceaed39a-684f-4da0-a1e9-ca9f91ee1c26/media/file/d48b65d2fb684b32b0fcfc41a2ad1eae/uchet-app-core.js"
+          curl -fsSL -o app-core.js "https://cdn.omniultra.imagine.art/ceaed39a-684f-4da0-a1e9-ca9f91ee1c26/media/file/2927daab8f004ca4871f0bab6a9824d4/uchet-app-core.js"
           curl -fsSL -o app-views.js "https://cdn.omniultra.imagine.art/ceaed39a-684f-4da0-a1e9-ca9f91ee1c26/media/file/99e579bea6964033886981c46e656435/uchet-app-views.js"
           curl -fsSL -o apps-script.gs "https://cdn.omniultra.imagine.art/ceaed39a-684f-4da0-a1e9-ca9f91ee1c26/media/file/ea2a1970fa914dd1b131c26cde75ccf3/uchet-apps-script.gs"
           ls -la
@@ -29,6 +29,7 @@ jobs:
           grep -q "Авторизуем устройство" app-core.js
           grep -q "Ключ устройства" apps-script.gs
           if grep -q "pinbig" app-views.js; then echo "в app-views остался блок PIN"; exit 1; fi
+          if grep -q "Код устарел" app-core.js; then echo "осталась проверка устаревшего кода"; exit 1; fi
           echo "checks passed"
       - name: Commit and push
         run: |
