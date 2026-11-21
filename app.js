@@ -434,9 +434,13 @@ function show(view) {
 /* ================= вход ================= */
 var setupMode = false;
 async function doLogin() {
-  var server = $("#loginUrl").value.trim() || DEFAULT_SERVER;
+  /* поле «Другой сервер» учитываем, только если его раскрыли и вписали правильную ссылку:
+     браузеры любят подставлять в скрытые поля логины из автозаполнения */
+  var typed = $("#loginUrl").value.trim();
+  var custom = $("#loginUrl").closest("details").open && typed && typed !== DEFAULT_SERVER;
+  if (custom && !validServer(typed)) return toast("Ссылка в «Другой сервер» должна быть вида https://script.google.com/macros/s/…/exec");
+  var server = custom ? typed : DEFAULT_SERVER;
   var pw = $("#loginPw").value;
-  if (!validServer(server)) return toast("Ссылка должна быть вида https://script.google.com/macros/s/…/exec");
   var btn = $("#loginBtn");
   btn.disabled = true;
   try {
