@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f172a">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
-<title>Отметка</title>
+<title>Отметка · Белгі</title>
 <style>
 :root{
   --bg:#0f172a; --card:#fff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0;
@@ -58,14 +58,21 @@ button.ghost{background:#f1f5f9;color:#334155;margin-top:10px}
 .note{background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:13.5px;color:#475569;text-align:left;margin-top:16px}
 .note.warn{background:#fff8e6;border-color:#fde68a;color:#92400e}
 .note b{color:#0f172a}
+.kz{display:block;font-size:.86em;font-weight:500;color:var(--muted);margin-top:3px;letter-spacing:0}
+h1 .kz{font-size:16px;font-weight:600}
+.big .kz{font-size:20px;font-weight:800;letter-spacing:.06em;color:inherit;opacity:.75;margin-top:0}
+.note .kz{color:#64748b;margin-top:8px;padding-top:8px;border-top:1px dashed #e2e8f0}
+.note.warn .kz{color:#a16207;border-top-color:#fde68a}
+.rows .r span:first-child .kz{font-size:12px}
+.kzi{opacity:.8;font-weight:600}
 .hidden{display:none !important}
 </style>
 </head>
 <body>
 <div class="card" id="card">
   <div class="spinner" id="spin"></div>
-  <h1 id="title">Открываем…</h1>
-  <p class="muted" id="sub">Секунду</p>
+  <h1 id="title">Открываем…<span class="kz">Ашылуда…</span></h1>
+  <p class="muted" id="sub"></p>
   <div id="body"></div>
 </div>
 
@@ -74,7 +81,8 @@ button.ghost{background:#f1f5f9;color:#334155;margin-top:10px}
 
 /* Служебная страница сотрудника. Открывается только из QR-кода:
    ?r=КОД&k=КЛЮЧ&s=СЕРВЕР  — привязка телефона (один раз)
-   ?t=in|out&s=СЕРВЕР      — отметка входа или выхода */
+   ?t=in|out&s=СЕРВЕР      — отметка входа или выхода
+   Все тексты — на русском и казахском. */
 
 var ME_KEY = "tt4_me";
 
@@ -89,6 +97,13 @@ function esc(s) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
   });
 }
+/* двуязычный текст: русский, под ним казахский. Аргументы — уже готовый HTML */
+function L(ru, kz) { return ru + '<span class="kz">' + kz + "</span>"; }
+/* в одну строку: «Готово · Дайын» */
+function I(ru, kz) { return ru + ' <span class="kzi">· ' + kz + "</span>"; }
+/* сообщение об ошибке, которое несёт оба языка */
+function Err(ru, kz) { var e = new Error(ru); e.kz = kz; return e; }
+
 function deviceLabel() {
   var ua = navigator.userAgent || "";
   var m = /Android[^;)]*;\s*([^;)]+?)(?:\s+Build|\))/.exec(ua);
@@ -102,14 +117,15 @@ function validServer(u) { return /^https:\/\/script\.google\.com\/macros\/s\/[\w
 /* ================= сеть ================= */
 function call(server, params) {
   return new Promise(function (resolve, reject) {
-    if (!validServer(server)) return reject(new Error("В QR-коде нет адреса сервера. Попросите руководителя распечатать коды заново."));
+    if (!validServer(server)) return reject(Err("В QR-коде нет адреса сервера. Попросите руководителя распечатать коды заново.",
+      "QR-кодта сервер мекенжайы жоқ. Басшыдан кодтарды қайта басып шығаруды сұраңыз."));
     var cb = "__e" + Math.random().toString(36).slice(2, 10);
     var url = server.trim() + "?callback=" + cb;
     Object.keys(params).forEach(function (k) {
       if (params[k] !== undefined && params[k] !== null) url += "&" + encodeURIComponent(k) + "=" + encodeURIComponent(params[k]);
     });
     var sc = document.createElement("script"), done = false;
-    var timer = setTimeout(function () { finish(function () { reject(new Error("Сервер не ответил за 20 секунд.")); }); }, 20000);
+    var timer = setTimeout(function () { finish(function () { reject(Err("Сервер не ответил за 20 секунд.", "Сервер 20 секундта жауап бермеді.")); }); }, 20000);
     function finish(fn) {
       if (done) return;
       done = true; clearTimeout(timer);
@@ -118,7 +134,7 @@ function call(server, params) {
       fn();
     }
     window[cb] = function (d) { finish(function () { resolve(d || {}); }); };
-    sc.onerror = function () { finish(function () { reject(new Error("Нет связи с сервером. Проверьте интернет.")); }); };
+    sc.onerror = function () { finish(function () { reject(Err("Нет связи с сервером. Проверьте интернет.", "Сервермен байланыс жоқ. Интернетті тексеріңіз.")); }); };
     sc.src = url;
     document.head.appendChild(sc);
   });
@@ -126,14 +142,16 @@ function call(server, params) {
 
 function getPosition() {
   return new Promise(function (resolve, reject) {
-    if (!navigator.geolocation) return reject(new Error("Телефон не поддерживает геолокацию."));
+    if (!navigator.geolocation) return reject(Err("Телефон не поддерживает геолокацию.", "Телефон геолокацияны қолдамайды."));
     navigator.geolocation.getCurrentPosition(
       function (p) { resolve(p.coords); },
       function (e) {
-        var m = "Не удалось определить местоположение.";
-        if (e && e.code === 1) m = "Доступ к местоположению запрещён. Разрешите его для этого сайта в настройках браузера и попробуйте снова.";
-        if (e && e.code === 3) m = "Местоположение не определилось за 20 секунд. Подойдите ближе к окну и попробуйте снова.";
-        reject(new Error(m));
+        var err = Err("Не удалось определить местоположение.", "Орналасқан жерді анықтау мүмкін болмады.");
+        if (e && e.code === 1) err = Err("Доступ к местоположению запрещён. Разрешите его для этого сайта в настройках браузера и попробуйте снова.",
+          "Орналасқан жерге рұқсат жоқ. Браузер баптауларында осы сайтқа рұқсат беріп, қайта көріңіз.");
+        if (e && e.code === 3) err = Err("Местоположение не определилось за 20 секунд. Подойдите ближе к окну и попробуйте снова.",
+          "Орналасқан жер 20 секундта анықталмады. Терезеге жақындап, қайта көріңіз.");
+        reject(err);
       },
       { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
     );
@@ -154,34 +172,40 @@ var ICONS = {
   out: '<path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>'
 };
 function icon(kind) { return '<div class="icon ' + kind + '"><svg viewBox="0 0 24 24">' + ICONS[kind] + "</svg></div>"; }
+/* title и sub — двуязычный HTML (через L) */
 function spinner(title, sub) {
   elSpin.classList.remove("hidden");
-  elTitle.textContent = title;
-  elSub.textContent = sub || "";
+  elTitle.innerHTML = title;
+  elSub.innerHTML = sub || "";
   elBody.innerHTML = "";
 }
 function screen(title, html) {
   elSpin.classList.add("hidden");
-  elTitle.textContent = title;
-  elSub.textContent = "";
+  elTitle.innerHTML = title;
+  elSub.innerHTML = "";
   elBody.innerHTML = html;
 }
 function problem(title, kind, badge, text, buttons) {
-  screen(title, icon(kind) + (badge ? '<span class="badge ' + (kind === "bad" ? "bad" : "warn") + '">' + esc(badge) + "</span>" : "") +
+  screen(title, icon(kind) + (badge ? '<span class="badge ' + (kind === "bad" ? "bad" : "warn") + '">' + badge + "</span>" : "") +
     '<div class="note">' + text + "</div>" + (buttons || ""));
+}
+function btn(act, ru, kz, ghost, type) {
+  return '<button' + (ghost ? ' class="ghost"' : "") + ' data-act="' + act + '"' + (type ? ' data-type="' + type + '"' : "") + ">" + I(ru, kz) + "</button>";
 }
 
 /* ================= привязка телефона ================= */
 async function doRegister(code, key, server, force) {
   var me = ls(ME_KEY, null);
   if (me && me.code && me.code !== code && !force) {
-    return problem("Телефон уже привязан", "warn", "Другой сотрудник",
-      "Этот телефон привязан к сотруднику <b>" + esc(me.name || me.code) + "</b>.<br><br>" +
-      "Если это ваш телефон и вы сканируете свой код — продолжайте. Тогда " + esc(me.name || me.code) +
-      " больше не сможет отмечаться с этого телефона.",
-      '<button data-act="force-reg">Привязать к новому коду</button><button class="ghost" data-act="close">Отмена</button>');
+    var who = "<b>" + esc(me.name || me.code) + "</b>";
+    return problem(L("Телефон уже привязан", "Телефон бұрыннан тіркелген"), "warn", I("Другой сотрудник", "Басқа қызметкер"),
+      L("Этот телефон привязан к сотруднику " + who + ".<br><br>Если это ваш телефон и вы сканируете свой код — продолжайте. Тогда " + who +
+        " больше не сможет отмечаться с этого телефона.",
+        "Бұл телефон " + who + " қызметкеріне тіркелген.<br><br>Егер бұл сіздің телефоныңыз болса және өз кодыңызды сканерлеп тұрсаңыз — жалғастырыңыз. Сонда " + who +
+        " бұл телефоннан бұдан былай белгі қоя алмайды."),
+      btn("force-reg", "Привязать к новому коду", "Жаңа кодқа тіркеу") + btn("close", "Отмена", "Бас тарту", true));
   }
-  spinner("Привязываем телефон…", "Код " + code);
+  spinner(L("Привязываем телефон…", "Телефон тіркелуде…"), "Код " + esc(code));
   var reply;
   try {
     reply = await call(server, {
@@ -189,63 +213,78 @@ async function doRegister(code, key, server, force) {
       secret: me && me.code === code ? me.secret : undefined
     });
   } catch (e) {
-    return problem("Нет связи", "warn", "", "<b>Не удалось связаться с сервером.</b><br>" + esc(e.message) + "<br><br>Проверьте интернет и отсканируйте код ещё раз.",
-      '<button data-act="reload">Повторить</button>');
+    return problem(L("Нет связи", "Байланыс жоқ"), "warn", "",
+      L("<b>Не удалось связаться с сервером.</b><br>" + esc(e.message) + "<br><br>Проверьте интернет и отсканируйте код ещё раз.",
+        "<b>Сервермен байланысу мүмкін болмады.</b><br>" + esc(e.kz || "") + "<br><br>Интернетті тексеріп, кодты қайта сканерлеңіз."),
+      btn("reload", "Повторить", "Қайталау"));
   }
   if (!reply.ok) {
+    var when = reply.boundAt ? " (" + esc(reply.boundAt) + ")" : "";
     var msg = {
-      used: "Этот код уже привязан к другому телефону" + (reply.boundAt ? " (" + esc(reply.boundAt) + ")" : "") +
-        ".<br><br>Если вы сменили телефон, попросите руководителя выдать вам новый код.",
-      old_qr: "Этот QR-код устарел — руководитель выпустил новый. Попросите свежий код.",
-      unknown_code: "Такого сотрудника нет в списке. Обратитесь к руководителю.",
-      blocked: "Доступ закрыт руководителем. Обратитесь к нему."
-    }[reply.error] || "Сервер ответил: " + esc(reply.error || "ошибка");
-    return problem("Код не принят", "bad", reply.error === "used" ? "Код уже использован" : "Отказ", msg);
+      used: L("Этот код уже привязан к другому телефону" + when + ".<br><br>Если вы сменили телефон, попросите руководителя выдать вам новый код.",
+        "Бұл код басқа телефонға тіркеліп қойған" + when + ".<br><br>Телефоныңызды ауыстырған болсаңыз, басшыдан жаңа код сұраңыз."),
+      old_qr: L("Этот QR-код устарел — руководитель выпустил новый. Попросите свежий код.",
+        "Бұл QR-код ескірген — басшы жаңасын шығарды. Жаңа код сұраңыз."),
+      unknown_code: L("Такого сотрудника нет в списке. Обратитесь к руководителю.",
+        "Мұндай қызметкер тізімде жоқ. Басшыға хабарласыңыз."),
+      blocked: L("Доступ закрыт руководителем. Обратитесь к нему.",
+        "Басшы рұқсатты жапқан. Оған хабарласыңыз.")
+    }[reply.error] || L("Сервер ответил: " + esc(reply.error || "ошибка"), "Сервер жауабы: " + esc(reply.error || "қате"));
+    return problem(L("Код не принят", "Код қабылданбады"), "bad",
+      reply.error === "used" ? I("Код уже использован", "Код қолданылған") : I("Отказ", "Бас тартылды"), msg);
   }
   me = { code: reply.code, name: reply.name, secret: reply.secret, server: server, boundAt: reply.boundAt };
   if (!lsSet(ME_KEY, me)) {
-    return problem("Браузер не сохранил данные", "warn", "", "Похоже, страница открыта в режиме инкогнито. Откройте код в обычном браузере телефона (Chrome) и отсканируйте его снова.");
+    return problem(L("Браузер не сохранил данные", "Браузер деректерді сақтамады"), "warn", "",
+      L("Похоже, страница открыта в режиме инкогнито. Откройте код в обычном браузере телефона (Chrome) и отсканируйте его снова.",
+        "Бет инкогнито режимінде ашылған сияқты. Кодты телефонның қалыпты браузерінде (Chrome) ашып, қайта сканерлеңіз."));
   }
-  screen(reply.repeat ? "Телефон уже привязан" : "Телефон привязан",
-    icon("ok") + '<span class="badge ok">Готово</span>' +
+  screen(reply.repeat ? L("Телефон уже привязан", "Телефон бұрыннан тіркелген") : L("Телефон привязан", "Телефон тіркелді"),
+    icon("ok") + '<span class="badge ok">' + I("Готово", "Дайын") + "</span>" +
     '<div class="name">' + esc(me.name) + "</div>" +
     '<div class="muted mono">' + esc(me.code) + "</div>" +
     '<div class="rows">' +
-      '<div class="r"><span>Телефон</span><span>' + esc(deviceLabel()) + "</span></div>" +
-      (me.boundAt ? '<div class="r"><span>Привязан</span><span>' + esc(me.boundAt) + "</span></div>" : "") +
+      '<div class="r"><span>' + L("Телефон", "Телефон") + "</span><span>" + esc(deviceLabel()) + "</span></div>" +
+      (me.boundAt ? '<div class="r"><span>' + L("Привязан", "Тіркелген") + "</span><span>" + esc(me.boundAt) + "</span></div>" : "") +
     "</div>" +
-    '<div class="note"><b>Что дальше.</b> Придя на работу, наведите камеру телефона на QR-код <b>«ВХОД»</b> у двери, уходя — на <b>«ВЫХОД»</b>. ' +
-    "Открывать что-то вручную не нужно.<br><br>Отмечайтесь в этом же браузере и не очищайте его данные — иначе телефон придётся привязывать заново.</div>" +
-    '<button data-act="close">Готово</button>');
+    '<div class="note">' + L(
+      "<b>Что дальше.</b> Придя на работу, наведите камеру телефона на QR-код <b>«ВХОД»</b> у двери, уходя — на <b>«ВЫХОД»</b>. " +
+      "Открывать что-то вручную не нужно.<br><br>Отмечайтесь в этом же браузере и не очищайте его данные — иначе телефон придётся привязывать заново.",
+      "<b>Әрі қарай.</b> Жұмысқа келгенде телефон камерасын есік жанындағы <b>«КІРУ»</b> QR-кодына, кетерде — <b>«ШЫҒУ»</b> кодына бағыттаңыз. " +
+      "Қолмен ештеңе ашудың қажеті жоқ.<br><br>Белгіні осы браузерде қойыңыз және оның деректерін өшірмеңіз — әйтпесе телефонды қайта тіркеуге тура келеді.") +
+    "</div>" + btn("close", "Готово", "Дайын"));
 }
 
 /* ================= отметка ================= */
 var PUNCH = {
-  in: { word: "ВХОД", cls: "in", title: "Вход отмечен" },
-  out: { word: "ВЫХОД", cls: "out", title: "Выход отмечен" }
+  in: { word: "ВХОД", wordKz: "КІРУ", cls: "in", title: L("Вход отмечен", "Кіру белгіленді") },
+  out: { word: "ВЫХОД", wordKz: "ШЫҒУ", cls: "out", title: L("Выход отмечен", "Шығу белгіленді") }
 };
 
 async function doPunch(type, server, noGeo) {
   var meta = PUNCH[type];
   var me = ls(ME_KEY, null);
   if (!me || !me.code || !me.secret) {
-    return problem("Телефон не привязан", "warn", "Нужна привязка",
-      "<b>Сначала отсканируйте свой личный код регистрации.</b><br>Его выдаёт руководитель один раз. После этого вход и выход отмечаются сканированием QR у двери.");
+    return problem(L("Телефон не привязан", "Телефон тіркелмеген"), "warn", I("Нужна привязка", "Тіркеу қажет"),
+      L("<b>Сначала отсканируйте свой личный код регистрации.</b><br>Его выдаёт руководитель один раз. После этого вход и выход отмечаются сканированием QR у двери.",
+        "<b>Алдымен өзіңіздің жеке тіркеу кодыңызды сканерлеңіз.</b><br>Оны басшы бір рет береді. Содан кейін кіру мен шығу есік жанындағы QR-кодты сканерлеу арқылы белгіленеді."));
   }
   server = validServer(server) ? server : me.server;
 
   var coords = null;
   if (!noGeo) {
-    spinner("Определяем местоположение…", "Разрешите доступ к геоданным, если браузер спросит");
+    spinner(L("Определяем местоположение…", "Орналасқан жер анықталуда…"),
+      L("Разрешите доступ к геоданным, если браузер спросит", "Браузер сұраса, геодеректерге рұқсат беріңіз"));
     try { coords = await getPosition(); } catch (e) {
-      return problem("Нужно местоположение", "warn", "", esc(e.message) +
-        "<br><br>Руководитель видит, отмечены ли вы на рабочем месте.",
-        '<button data-act="retry" data-type="' + type + '">Попробовать снова</button>' +
-        '<button class="ghost" data-act="nogeo" data-type="' + type + '">Отметить без местоположения</button>');
+      return problem(L("Нужно местоположение", "Орналасқан жер қажет"), "warn", "",
+        L(esc(e.message) + "<br><br>Руководитель видит, отмечены ли вы на рабочем месте.",
+          esc(e.kz || "") + "<br><br>Басшы сіздің жұмыс орнында белгі қойғаныңызды көреді."),
+        btn("retry", "Попробовать снова", "Қайта көру", false, type) +
+        btn("nogeo", "Отметить без местоположения", "Орналасқан жерсіз белгілеу", true, type));
     }
   }
 
-  spinner("Сохраняем отметку…", me.name || me.code);
+  spinner(L("Сохраняем отметку…", "Белгі сақталуда…"), esc(me.name || me.code));
   var r;
   try {
     r = await call(server, {
@@ -255,19 +294,24 @@ async function doPunch(type, server, noGeo) {
       acc: coords ? Math.round(coords.accuracy) : undefined
     });
   } catch (e) {
-    return problem("Не сохранилось", "warn", "", "<b>Отметка не записана.</b><br>" + esc(e.message),
-      '<button data-act="retry" data-type="' + type + '">Повторить</button>');
+    return problem(L("Не сохранилось", "Сақталмады"), "warn", "",
+      L("<b>Отметка не записана.</b><br>" + esc(e.message), "<b>Белгі жазылмады.</b><br>" + esc(e.kz || "")),
+      btn("retry", "Повторить", "Қайталау", false, type));
   }
   if (!r.ok) {
+    var title = L("Отметка не принята", "Белгі қабылданбады");
     if (r.error === "not_registered") {
-      return problem("Отметка не принята", "bad", "Телефон не привязан",
-        "Сервер не узнаёт этот телефон — возможно, руководитель выдал вам новый код. Отсканируйте свой новый код регистрации.");
+      return problem(title, "bad", I("Телефон не привязан", "Телефон тіркелмеген"),
+        L("Сервер не узнаёт этот телефон — возможно, руководитель выдал вам новый код. Отсканируйте свой новый код регистрации.",
+          "Сервер бұл телефонды танымайды — мүмкін, басшы сізге жаңа код берген. Жаңа тіркеу кодыңызды сканерлеңіз."));
     }
     if (r.error === "blocked") {
-      return problem("Отметка не принята", "bad", "Доступ закрыт", "Руководитель закрыл вам доступ. Обратитесь к нему.");
+      return problem(title, "bad", I("Доступ закрыт", "Рұқсат жабық"),
+        L("Руководитель закрыл вам доступ. Обратитесь к нему.", "Басшы сізге рұқсатты жапқан. Оған хабарласыңыз."));
     }
-    return problem("Отметка не принята", "bad", "Ошибка", "Сервер ответил: " + esc(r.error || "ошибка"),
-      '<button data-act="retry" data-type="' + type + '">Повторить</button>');
+    return problem(title, "bad", I("Ошибка", "Қате"),
+      L("Сервер ответил: " + esc(r.error || "ошибка"), "Сервер жауабы: " + esc(r.error || "қате")),
+      btn("retry", "Повторить", "Қайталау", false, type));
   }
   if (r.name && r.name !== me.name) { me.name = r.name; lsSet(ME_KEY, me); }
   showDone(meta, r);
@@ -275,30 +319,30 @@ async function doPunch(type, server, noGeo) {
 
 function showDone(meta, r) {
   var zone;
-  if (r.zone === "в зоне") zone = '<span style="color:#15803d">на рабочем месте</span>';
-  else if (r.zone === "вне зоны") zone = '<span style="color:#b91c1c">вне рабочего места' + (r.distance ? " · " + r.distance + " м" : "") + "</span>";
-  else if (r.zone === "без координат") zone = '<span style="color:#92400e">не определено</span>';
-  else zone = '<span class="muted">не проверяется</span>';
+  if (r.zone === "в зоне") zone = '<span style="color:#15803d">' + L("на рабочем месте", "жұмыс орнында") + "</span>";
+  else if (r.zone === "вне зоны") zone = '<span style="color:#b91c1c">' + L("вне рабочего места" + (r.distance ? " · " + r.distance + " м" : ""), "жұмыс орнынан тыс") + "</span>";
+  else if (r.zone === "без координат") zone = '<span style="color:#92400e">' + L("не определено", "анықталмады") + "</span>";
+  else zone = '<span class="muted">' + L("не проверяется", "тексерілмейді") + "</span>";
 
   var notes = [];
-  if (r.duplicate) notes.push("Вы уже отметились только что — повторная отметка не нужна.");
-  if (r.warning === "prev_open") notes.push("В прошлый раз вы не отметили <b>выход</b>. Сообщите руководителю.");
-  if (r.warning === "no_in") notes.push("Сегодня не найден <b>вход</b>. Если вы забыли отметиться утром, сообщите руководителю.");
-  if (r.zone === "вне зоны") notes.push("Отметка сохранена, но вы далеко от рабочего места. Руководитель это увидит.");
-  if (r.zone === "без координат") notes.push("Отметка сохранена без местоположения. Руководитель это увидит.");
+  if (r.duplicate) notes.push(L("Вы уже отметились только что — повторная отметка не нужна.", "Сіз жаңа ғана белгі қойдыңыз — қайталаудың қажеті жоқ."));
+  if (r.warning === "prev_open") notes.push(L("В прошлый раз вы не отметили <b>выход</b>. Сообщите руководителю.", "Өткен жолы сіз <b>шығуды</b> белгілемегенсіз. Басшыға хабарлаңыз."));
+  if (r.warning === "no_in") notes.push(L("Сегодня не найден <b>вход</b>. Если вы забыли отметиться утром, сообщите руководителю.", "Бүгін <b>кіру</b> белгісі табылмады. Таңертең белгі қоюды ұмытсаңыз, басшыға хабарлаңыз."));
+  if (r.zone === "вне зоны") notes.push(L("Отметка сохранена, но вы далеко от рабочего места. Руководитель это увидит.", "Белгі сақталды, бірақ сіз жұмыс орнынан алыстасыз. Басшы мұны көреді."));
+  if (r.zone === "без координат") notes.push(L("Отметка сохранена без местоположения. Руководитель это увидит.", "Белгі орналасқан жерсіз сақталды. Басшы мұны көреді."));
 
   screen(meta.title,
     icon(meta.cls) +
-    '<div class="big ' + meta.cls + '">' + meta.word + "</div>" +
+    '<div class="big ' + meta.cls + '">' + meta.word + '<span class="kz">' + meta.wordKz + "</span></div>" +
     '<div class="time">' + esc(r.date + " · " + r.time) + "</div>" +
-    (r.duplicate ? '<div class="badge info" style="margin-top:10px">уже отмечено</div>' : "") +
+    (r.duplicate ? '<div class="badge info" style="margin-top:10px">' + I("уже отмечено", "белгіленген") + "</div>" : "") +
     '<div class="rows">' +
-      '<div class="r"><span>Сотрудник</span><span>' + esc(r.name || r.code) + "</span></div>" +
-      '<div class="r"><span>Местоположение</span>' + zone + "</div>" +
+      '<div class="r"><span>' + L("Сотрудник", "Қызметкер") + "</span><span>" + esc(r.name || r.code) + "</span></div>" +
+      '<div class="r"><span>' + L("Местоположение", "Орналасқан жер") + "</span>" + zone + "</div>" +
     "</div>" +
     (notes.length ? '<div class="note warn">' + notes.join("<br><br>") + "</div>"
-      : '<div class="note">Отметка записана. Страницу можно закрыть.</div>') +
-    '<button data-act="close">Готово</button>');
+      : '<div class="note">' + L("Отметка записана. Страницу можно закрыть.", "Белгі жазылды. Бетті жабуға болады.") + "</div>") +
+    btn("close", "Готово", "Дайын"));
 }
 
 /* ================= запуск ================= */
@@ -309,9 +353,12 @@ function boot() {
   try { if (location.search) history.replaceState(null, "", location.pathname); } catch (e) {}
   if (P.code && P.key) return doRegister(P.code, P.key, P.server, false);
   if (P.type === "in" || P.type === "out") return doPunch(P.type, P.server, false);
-  screen("Служебная страница", icon("warn") +
-    '<div class="note">Эта страница открывается сама, когда вы сканируете QR-код на работе камерой телефона.<br><br>' +
-    "Чтобы привязать телефон — отсканируйте свой личный код. Чтобы отметиться — код «ВХОД» или «ВЫХОД» у двери.</div>");
+  screen(L("Служебная страница", "Қызметтік бет"), icon("warn") +
+    '<div class="note">' + L(
+      "Эта страница открывается сама, когда вы сканируете QR-код на работе камерой телефона.<br><br>" +
+      "Чтобы привязать телефон — отсканируйте свой личный код. Чтобы отметиться — код «ВХОД» или «ВЫХОД» у двери.",
+      "Бұл бет жұмыста QR-кодты телефон камерасымен сканерлегенде өзі ашылады.<br><br>" +
+      "Телефонды тіркеу үшін — жеке кодыңызды сканерлеңіз. Белгі қою үшін — есік жанындағы «КІРУ» немесе «ШЫҒУ» кодын.") + "</div>");
 }
 
 document.addEventListener("click", function (ev) {

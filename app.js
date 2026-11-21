@@ -633,11 +633,15 @@ var actions = {
     if (e) downloadDataUrl(qrDataUrl(linkReg(e), 800), "qr-" + e.code + ".png");
   },
   "print-posters": function () {
+    /* печатные постеры видят сотрудники — на русском и казахском */
+    var brand = '<div class="brand">Учёт рабочего времени<br><span class="kz">Жұмыс уақытын есепке алу</span></div>';
     doPrint(
-      '<div class="print-poster"><div class="brand">Учёт рабочего времени</div><div class="word in">ВХОД</div>' +
-      '<img src="' + qrDataUrl(linkIn(), 900) + '"><div class="note">Наведите камеру телефона, когда пришли на работу</div></div>' +
-      '<div class="print-poster"><div class="brand">Учёт рабочего времени</div><div class="word out">ВЫХОД</div>' +
-      '<img src="' + qrDataUrl(linkOut(), 900) + '"><div class="note">Наведите камеру телефона, когда уходите</div></div>');
+      '<div class="print-poster">' + brand + '<div class="word in">ВХОД<span class="kz">КІРУ</span></div>' +
+      '<img src="' + qrDataUrl(linkIn(), 900) + '"><div class="note">Наведите камеру телефона, когда пришли на работу' +
+      '<span class="kz">Жұмысқа келгенде телефон камерасын бағыттаңыз</span></div></div>' +
+      '<div class="print-poster">' + brand + '<div class="word out">ВЫХОД<span class="kz">ШЫҒУ</span></div>' +
+      '<img src="' + qrDataUrl(linkOut(), 900) + '"><div class="note">Наведите камеру телефона, когда уходите' +
+      '<span class="kz">Жұмыстан кетерде телефон камерасын бағыттаңыз</span></div></div>');
   },
   "download-posters": function () {
     downloadDataUrl(qrDataUrl(linkIn(), 900), "qr-vhod.png");
@@ -649,7 +653,8 @@ var actions = {
     doPrint('<div class="badge-grid">' + free.map(function (e) {
       return '<div class="print-badge"><img src="' + qrDataUrl(linkReg(e), 500) + '">' +
         '<div class="nm">' + esc(e.name) + '</div><div class="cd">' + esc(e.code) + "</div>" +
-        '<div class="tt">Личный код. Отсканируйте камерой своего телефона один раз</div></div>';
+        '<div class="tt">Личный код. Отсканируйте камерой своего телефона один раз' +
+        '<span class="kz">Жеке код. Өз телефоныңыздың камерасымен бір рет сканерлеңіз</span></div></div>';
     }).join("") + "</div>");
   },
   "download-all": function () {

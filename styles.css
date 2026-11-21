@@ -123,5 +123,9 @@ nav.bottom button span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis
   .print-badge .nm{font-size:12px;font-weight:700;margin-top:2mm}
   .print-badge .cd{font-size:10px;color:#64748b}
   .print-badge .tt{font-size:9px;color:#94a3b8;margin-top:1mm}
+  .print-poster .kz,.print-badge .kz{display:block}
+  .print-poster .word .kz{font-size:44px;opacity:.8;letter-spacing:.08em}
+  .print-poster .note .kz{margin-top:2mm}
+  .print-poster img{width:110mm;height:110mm}
 }
 @media (max-width:400px){.qr-grid{grid-template-columns:1fr}.kpi{grid-template-columns:1fr 1fr}.grid3{grid-template-columns:1fr 1fr}}
