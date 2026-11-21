@@ -46,15 +46,6 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 .input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 label.field{display:flex;flex-direction:column;gap:5px;font-size:12.5px;font-weight:600;color:#475569}
 label.field .hint{font-weight:400;color:var(--muted)}
-.cam-wrap{position:relative;border-radius:12px;overflow:hidden;background:#0b1220;aspect-ratio:1/1;display:grid;place-items:center}
-.cam-wrap video{width:100%;height:100%;object-fit:cover;display:none}
-.cam-wrap.on video{display:block}
-.cam-idle{color:#94a3b8;text-align:center;padding:20px;font-size:13.5px}
-.cam-frame{position:absolute;inset:16%;border:2px solid rgba(255,255,255,.75);border-radius:18px;display:none}
-.cam-wrap.on .cam-frame{display:block}
-.cam-frame:before,.cam-frame:after{content:"";position:absolute;width:26px;height:26px;border:3px solid var(--accent)}
-.cam-frame:before{top:-3px;left:-3px;border-right:0;border-bottom:0;border-radius:12px 0 0 0}
-.cam-frame:after{bottom:-3px;right:-3px;border-left:0;border-top:0;border-radius:0 0 12px 0}
 .me{display:flex;align-items:center;gap:10px}
 .avatar{width:40px;height:40px;border-radius:12px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:700;flex:0 0 auto}
 .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;font-size:11.5px;font-weight:600;background:#f1f5f9;color:#475569}
@@ -63,7 +54,6 @@ label.field .hint{font-weight:400;color:var(--muted)}
 .badge.amber{background:var(--amber-soft);color:var(--amber)}
 .badge.blue{background:var(--accent-soft);color:#1d4ed8}
 .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
-.pinbig{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:40px;letter-spacing:.16em;font-weight:700;text-align:center;padding:16px 8px;border-radius:14px;background:var(--accent-soft);color:#1e3a8a}
 .tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 .tbl th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:700;padding:8px 6px;border-bottom:1px solid var(--line)}
 .tbl td{padding:9px 6px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
@@ -110,6 +100,10 @@ details.acc summary{cursor:pointer;font-weight:600;font-size:13.5px}
 .chk input{width:20px;height:20px;accent-color:var(--accent)}
 footer.foot{text-align:center;color:#94a3b8;font-size:11.5px;padding:6px 0 2px}
 #printArea{display:none}
+.hidden{display:none !important}
+.card.empty{padding:22px 14px}
+nav.bottom button{min-width:0}
+nav.bottom button span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 @media print{
   body{background:#fff}
   body.printing #app,body.printing .overlay,body.printing .toast{display:none !important}
