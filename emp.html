@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<meta name="robots" content="noindex">
+<title>Отметка</title>
+<style>
+:root{
+  --bg:#0f172a; --card:#fff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0;
+  --accent:#2563eb; --ok:#16a34a; --bad:#dc2626; --warn:#b45309;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Arial,sans-serif;
+  font-size:16px; line-height:1.45; -webkit-font-smoothing:antialiased;
+  display:flex; align-items:center; justify-content:center; padding:16px;
+}
+.card{
+  width:100%; max-width:420px; background:#fff; border-radius:22px; padding:24px 20px 20px;
+  box-shadow:0 24px 60px -24px rgba(0,0,0,.55); text-align:center;
+}
+h1{font-size:21px;margin:0 0 4px;font-weight:700;letter-spacing:-.01em}
+p{margin:0}
+.muted{color:var(--muted);font-size:14px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:12.5px;font-weight:700}
+.badge.ok{background:#eafaf0;color:#15803d}
+.badge.bad{background:#fdeeee;color:#b91c1c}
+.badge.warn{background:#fff8e6;color:#92400e}
+.badge.info{background:#eff4ff;color:#1d4ed8}
+.icon{width:92px;height:92px;margin:6px auto 14px;border-radius:50%;display:grid;place-items:center}
+.icon svg{width:48px;height:48px;stroke-width:2.4;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.icon.ok{background:#eafaf0}.icon.ok svg{stroke:#16a34a}
+.icon.in{background:#eafaf0}.icon.in svg{stroke:#16a34a}
+.icon.out{background:#eff4ff}.icon.out svg{stroke:#2563eb}
+.icon.bad{background:#fdeeee}.icon.bad svg{stroke:#dc2626}
+.icon.warn{background:#fff8e6}.icon.warn svg{stroke:#b45309}
+.big{font-size:34px;font-weight:800;letter-spacing:.06em;margin:2px 0 6px}
+.big.in{color:#16a34a}.big.out{color:#2563eb}
+.time{font-size:16px;font-weight:700;margin-top:2px}
+.rows{text-align:left;margin-top:18px;border-top:1px solid var(--line);padding-top:14px;display:flex;flex-direction:column;gap:9px;font-size:14px}
+.rows .r{display:flex;justify-content:space-between;gap:12px}
+.rows .r span:first-child{color:var(--muted)}
+.rows .r span:last-child{font-weight:600;text-align:right}
+.spinner{width:44px;height:44px;border-radius:50%;border:4px solid #dbeafe;border-top-color:var(--accent);animation:spin .8s linear infinite;margin:26px auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+button{
+  font:inherit;cursor:pointer;border:0;width:100%;min-height:52px;border-radius:14px;
+  font-weight:700;font-size:16px;margin-top:20px;background:var(--accent);color:#fff;
+}
+button:active{opacity:.88}
+button.ghost{background:#f1f5f9;color:#334155;margin-top:10px}
+.note{background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:13.5px;color:#475569;text-align:left;margin-top:16px}
+.note b{color:#0f172a}
+.hidden{display:none !important}
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="spinner" id="spin"></div>
+  <h1 id="title">Открываем…</h1>
+  <p class="muted" id="sub">Секунду</p>
+  <div id="body"></div>
+</div>
+
+<script>
+"use strict";
+
+/* ================= настройки ================= */
+var DEVICE_KEY = "tt_dev";
+var ME_KEY = "tt_me_emp";      /* отдельное хранилище от админского приложения */
+var LAST_KEY = "tt_last_punch";
+
+function qs(name) {
+  var m = new RegExp("[?&]" + name + "=([^&#]*)").exec(location.search);
+  return m ? decodeURIComponent(m[1].replace(/\+/g, " ")) : "";
+}
+function ls(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
+function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+function esc(s) {
+  return String(s === undefined || s === null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function pad(n) { return String(n).padStart(2, "0"); }
+function dmy(d) { d = new Date(d); return pad(d.getDate()) + "." + pad(d.getMonth() + 1) + "." + d.getFullYear(); }
+function hhmmss(d) { d = new Date(d); return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()); }
+
+function deviceId() {
+  var v = ls(DEVICE_KEY, null);
+  if (!v) { v = "dev_" + Math.random().toString(36).slice(2, 10).toUpperCase(); lsSet(DEVICE_KEY, v); }
+  return v;
+}
+function deviceLabel() {
+  var ua = navigator.userAgent || "";
+  if (/iPhone|iPad|iPod/i.test(ua)) return "iPhone / iPad";
+  if (/Android/i.test(ua)) return "Android";
+  if (/Windows/i.test(ua)) return "Windows";
+  if (/Macintosh|Mac OS X/i.test(ua)) return "Mac";
+  return "Телефон";
+}
+
+/* ================= сеть ================= */
+function jsonp(base, params) {
+  return new Promise(function (resolve, reject) {
+    var clean = String(base || "").trim();
+    if (!clean) return reject(new Error("QR-код не настроен: в нём нет адреса таблицы"));
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/.test(clean)) {
+      return reject(new Error("Некорректный адрес таблицы в QR-коде"));
+    }
+    var cb = "__e" + Math.random().toString(36).slice(2, 10);
+    var url = clean.indexOf("?") >= 0 ? clean + "&" : clean + "?";
+    url += "callback=" + encodeURIComponent(cb);
+    Object.keys(params || {}).forEach(function (k) {
+      var v = params[k];
+      if (v !== undefined && v !== null) url += "&" + encodeURIComponent(k) + "=" + encodeURIComponent(v);
+    });
+    var sc = document.createElement("script");
+    var done = false;
+    var timer = setTimeout(function () { finish(function () { reject(new Error("Таблица не ответила за 15 секунд")); }); }, 15000);
+    function finish(fn) {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { delete window[cb]; } catch (e) { window[cb] = undefined; }
+      if (sc.parentNode) sc.parentNode.removeChild(sc);
+      fn();
+    }
+    window[cb] = function (d) { finish(function () { resolve(d); }); };
+    sc.onerror = function () { finish(function () { reject(new Error("Нет связи с таблицей")); }); };
+    sc.src = url;
+    document.head.appendChild(sc);
+  });
+}
+
+function getPosition() {
+  return new Promise(function (resolve, reject) {
+    if (!navigator.geolocation) return reject(new Error("Телефон не поддерживает геолокацию"));
+    navigator.geolocation.getCurrentPosition(
+      function (p) { resolve(p.coords); },
+      function (e) {
+        var m = "Не удалось определить геопозицию";
+        if (e && e.code === 1) m = "Доступ к геолокации запрещён. Разрешите его для этого сайта и попробуйте снова.";
+        if (e && e.code === 3) m = "Геопозиция не определилась за 15 секунд. Выйдите на улицу или ближе к окну.";
+        reject(new Error(m));
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  });
+}
+
+/* ================= экраны ================= */
+var elCard = document.getElementById("card");
+var elSpin = document.getElementById("spin");
+var elTitle = document.getElementById("title");
+var elSub = document.getElementById("sub");
+var elBody = document.getElementById("body");
+
+var ICONS = {
+  ok: '<path d="M20 6L9 17l-5-5"/>',
+  bad: '<path d="M18 6L6 18M6 6l12 12"/>',
+  warn: '<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
+  in: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/>',
+  out: '<path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>'
+};
+
+function icon(kind) {
+  return '<div class="icon ' + kind + '"><svg viewBox="0 0 24 24">' + ICONS[kind] + "</svg></div>";
+}
+function spinner(title, sub) {
+  elSpin.classList.remove("hidden");
+  elTitle.textContent = title;
+  elSub.textContent = sub || "";
+  elBody.innerHTML = "";
+}
+function result(opts) {
+  elSpin.classList.add("hidden");
+  elTitle.innerHTML = opts.title || "";
+  elSub.textContent = opts.sub || "";
+  elBody.innerHTML = opts.html || "";
+}
+
+function clock() {
+  return dmy(new Date()) + " · " + hhmmss(new Date());
+}
+
+/* ================= регистрация ================= */
+async function doRegister(code, key, sheet) {
+  spinner("Активируем телефон…", "Код " + code);
+  var me = ls(ME_KEY, null);
+  if (me && me.empCode === code && me.key === key) {
+    return showBound(me, true);
+  }
+  var reply;
+  try {
+    reply = await jsonp(sheet, {
+      action: "register", token: key, empCode: code, key: key,
+      deviceId: deviceId(), deviceLabel: deviceLabel()
+    });
+  } catch (e) {
+    return result({
+      title: "Нет связи",
+      sub: "",
+      html: icon("warn") +
+        '<div class="note"><b>Не удалось связаться с таблицей.</b><br>' + esc(e.message) +
+        "<br><br>Проверьте интернет и отсканируйте код ещё раз.</div>" +
+        '<button data-act="reload">Повторить</button>'
+    });
+  }
+  if (reply && reply.ok === false) {
+    if (reply.error === "used" || reply.error === "device_mismatch") {
+      return result({
+        title: "Код уже использован",
+        sub: "",
+        html: icon("bad") +
+          '<span class="badge bad">Доступ занят</span>' +
+          '<div class="note">Этот код уже привязан к другому телефону' +
+          (reply.empName ? " (" + esc(reply.empName) + ")" : "") +
+          (reply.boundAt ? ", привязка " + esc(reply.boundAt) : "") +
+          ".<br><br>Обратитесь к руководителю: он разрешит повторную привязку, и вы отсканируете код заново.</div>"
+      });
+    }
+    return result({
+      title: "Код не принят",
+      sub: "",
+      html: icon("bad") + '<div class="note">Ответ таблицы: ' + esc(reply.error || "ошибка") + "</div>"
+    });
+  }
+  var bound = {
+    empCode: code, empName: (reply && reply.empName) || "",
+    key: key, sheet: sheet, deviceId: deviceId(), deviceLabel: deviceLabel(),
+    boundAt: new Date().toISOString()
+  };
+  lsSet(ME_KEY, bound);
+  showBound(bound, false);
+}
+
+function showBound(me, repeat) {
+  result({
+    title: repeat ? "Телефон уже привязан" : "Телефон привязан",
+    sub: "",
+    html: icon("ok") +
+      '<span class="badge ok">Готово</span>' +
+      (me.empName ? '<div class="big" style="font-size:22px;letter-spacing:0;margin-top:12px">' + esc(me.empName) + "</div>" : "") +
+      '<div class="muted mono" style="margin-top:2px">' + esc(me.empCode) + "</div>" +
+      '<div class="rows">' +
+        '<div class="r"><span>Телефон</span><span>' + esc(me.deviceLabel) + "</span></div>" +
+        '<div class="r"><span>Привязан</span><span>' + esc(dmy(me.boundAt) + " " + hhmmss(me.boundAt).slice(0, 5)) + "</span></div>" +
+      "</div>" +
+      '<div class="note"><b>Что дальше.</b> Приходите на работу и сканируйте камерой телефона QR-код <b>«ВХОД»</b> у двери. Уходите — QR-код <b>«ВЫХОД»</b>. Приложение открывать вручную не нужно: всё делает обычный сканер.</div>' +
+      '<button data-act="close">Готово</button>'
+  });
+}
+
+/* ================= отметка ================= */
+var PUNCH = {
+  in: { word: "ВХОД", cls: "in", title: "Вход отмечен" },
+  out: { word: "ВЫХОД", cls: "out", title: "Выход отмечен" }
+};
+
+async function doPunch(type, sheet) {
+  var meta = PUNCH[type] || PUNCH.in;
+  var me = ls(ME_KEY, null);
+  if (!me || !me.empCode) {
+    return result({
+      title: "Телефон не привязан",
+      sub: "",
+      html: icon("warn") +
+        '<span class="badge warn">Нужна привязка</span>' +
+        '<div class="note"><b>Сначала отсканируйте свой код регистрации.</b><br>Он выдаётся один раз и привязывает телефон к вашей карточке сотрудника. После этого вход и выход будут отмечаться одной фотографией QR-кода.</div>'
+    });
+  }
+  var useSheet = sheet || me.sheet;
+  if (!useSheet) {
+    return result({
+      title: "QR-код не настроен",
+      sub: "",
+      html: icon("warn") + '<div class="note">В этом коде нет адреса таблицы. Попросите руководителя распечатать новые QR-коды.</div>'
+    });
+  }
+
+  /* защита от двойного сканирования одного и того же постера */
+  var last = ls(LAST_KEY, null);
+  if (last && last.type === type && last.empCode === me.empCode && Date.now() - new Date(last.ts).getTime() < 45000) {
+    return showDone(meta, {
+      empName: me.empName, empCode: me.empCode, ts: last.ts,
+      inZone: last.inZone, distance: last.distance, duplicate: true
+    });
+  }
+
+  spinner("Проверяем доступ…", me.empName || me.empCode);
+  var chk;
+  try {
+    chk = await jsonp(useSheet, {
+      action: "check", token: me.key, empCode: me.empCode, key: me.key, deviceId: deviceId()
+    });
+  } catch (e) {
+    return result({
+      title: "Нет связи",
+      sub: "",
+      html: icon("warn") + '<div class="note"><b>Таблица не ответила.</b><br>' + esc(e.message) +
+        "<br><br>Отметка не сохранена. Попробуйте ещё раз через минуту.</div>" +
+        '<button data-act="retry-punch" data-type="' + type + '">Повторить</button>'
+    });
+  }
+  if (chk && chk.ok === false) {
+    var msg = "";
+    if (chk.error === "blocked") msg = "Доступ отозван руководителем. Отметки с этого телефона больше не принимаются.";
+    else if (chk.error === "device_mismatch") msg = "Этот телефон не привязан к вашей карточке. Обратитесь к руководителю.";
+    else if (chk.error === "invalid_key") msg = "Код сотрудника устарел. Получите новый код регистрации.";
+    else if (chk.error === "not_registered") msg = "Телефон не найден в таблице. Отсканируйте код регистрации заново.";
+    else msg = "Ответ таблицы: " + (chk.error || "ошибка");
+    return result({
+      title: "Отметка не принята",
+      sub: "",
+      html: icon("bad") + '<span class="badge bad">Запрещено</span>' +
+        '<div class="note">' + esc(msg) + "</div>"
+    });
+  }
+
+  spinner("Определяем местоположение…", "Разрешите доступ к геоданным");
+  var coords = null, gpsError = null;
+  try { coords = await getPosition(); } catch (e) { gpsError = e; }
+  if (gpsError) {
+    return result({
+      title: "Нужна геопозиция",
+      sub: "",
+      html: icon("warn") +
+        '<div class="note">' + esc(gpsError.message) + "<br><br>Без координат отметка не сохраняется: руководитель должен видеть, что вы на рабочем месте.</div>" +
+        '<button data-act="retry-punch" data-type="' + type + '">Попробовать снова</button>'
+    });
+  }
+
+  spinner("Сохраняем отметку…", "");
+  var rec = {
+    empCode: me.empCode, empName: me.empName, type: type,
+    ts: new Date().toISOString(),
+    lat: Number(coords.latitude.toFixed(6)), lng: Number(coords.longitude.toFixed(6)),
+    accuracy: Math.round(coords.accuracy), deviceId: deviceId(), deviceLabel: deviceLabel(),
+    source: "qr"
+  };
+  var saved;
+  try {
+    saved = await jsonp(useSheet, {
+      action: "append", token: me.key, empCode: me.empCode, deviceId: deviceId(),
+      record: JSON.stringify(rec)
+    });
+  } catch (e) {
+    return result({
+      title: "Не сохранилось",
+      sub: "",
+      html: icon("warn") + '<div class="note"><b>Таблица не приняла запись.</b><br>' + esc(e.message) +
+        "<br><br>Попробуйте ещё раз — важно, чтобы отметка попала в журнал.</div>" +
+        '<button data-act="retry-punch" data-type="' + type + '">Повторить</button>'
+    });
+  }
+  if (!saved || saved.ok === false) {
+    return result({
+      title: "Не сохранилось",
+      sub: "",
+      html: icon("bad") + '<div class="note">Ответ таблицы: ' + esc((saved && saved.error) || "ошибка") + "</div>" +
+        '<button data-act="retry-punch" data-type="' + type + '">Повторить</button>'
+    });
+  }
+  lsSet(LAST_KEY, { type: type, empCode: me.empCode, ts: rec.ts, inZone: saved.inZone, distance: saved.distance });
+  showDone(meta, {
+    empName: me.empName, empCode: me.empCode, ts: rec.ts,
+    inZone: saved.inZone, distance: saved.distance, accuracy: rec.accuracy,
+    duplicate: false
+  });
+}
+
+function showDone(meta, data) {
+  var zoneRow = "";
+  if (data.inZone === true) zoneRow = '<div class="r"><span>Геозона</span><span style="color:#15803d">в допустимой зоне</span></div>';
+  else if (data.inZone === false) zoneRow = '<div class="r"><span>Геозона</span><span style="color:#b91c1c">вне зоны' + (data.distance ? " · " + data.distance + " м" : "") + "</span></div>";
+  else zoneRow = '<div class="r"><span>Геозона</span><span style="color:#92400e">не настроена в таблице</span></div>';
+
+  result({
+    title: meta.title,
+    sub: "",
+    html: icon(meta.cls) +
+      '<div class="big ' + meta.cls + '">' + meta.word + "</div>" +
+      '<div class="time">' + esc(dmy(data.ts) + " · " + hhmmss(data.ts)) + "</div>" +
+      (data.duplicate ? '<div class="badge info" style="margin-top:10px">уже отмечено минуту назад</div>' : "") +
+      '<div class="rows">' +
+        (data.empName ? '<div class="r"><span>Сотрудник</span><span>' + esc(data.empName) + "</span></div>" : "") +
+        '<div class="r"><span>Код</span><span class="mono">' + esc(data.empCode) + "</span></div>" +
+        zoneRow +
+      "</div>" +
+      (data.inZone === false
+        ? '<div class="note">Отметка сохранена, но снаружи офиса. Руководитель это увидит.</div>'
+        : '<div class="note">Отметка записана в журнал. Можно закрыть страницу.</div>') +
+      '<button data-act="close">Готово</button>'
+  });
+}
+
+/* ================= запуск ================= */
+function boot() {
+  var code = qs("r"), key = qs("k"), type = qs("t"), sheet = qs("s");
+  if (code && key) return doRegister(code.toUpperCase(), key.toUpperCase(), sheet);
+  if (type === "in" || type === "out") return doPunch(type, sheet);
+  result({
+    title: "Это служебная страница",
+    sub: "",
+    html: icon("warn") +
+      '<div class="note">Она открывается автоматически при сканировании QR-кода на работе. Отдельная ссылка не нужна.<br><br>Для привязки телефона отсканируйте свой код регистрации, для отметки — «ВХОД» или «ВЫХОД».</div>'
+  });
+}
+
+document.addEventListener("click", function (ev) {
+  var b = ev.target.closest("[data-act]");
+  if (!b) return;
+  var act = b.getAttribute("data-act");
+  if (act === "close") { window.close(); setTimeout(function () { location.href = "about:blank"; }, 120); }
+  if (act === "reload") location.reload();
+  if (act === "retry-punch") doPunch(b.getAttribute("data-type"), qs("s"));
+});
+
+boot();
+</script>
+</body>
+</html>
+

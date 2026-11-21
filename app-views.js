@@ -1,40 +1,80 @@
 "use strict";
 /* продолжение: отрисовка, действия, события */
-function renderScanner() {
-  var meBox = $("#meCard");
-  if (S.me) {
-    var emp = findEmp(S.me.empCode);
-    meBox.innerHTML =
-      '<div class="me"><div class="avatar">' + esc(initials((emp && emp.name) || S.me.empName)) + "</div>" +
-      '<div class="stack" style="gap:1px;flex:1"><div style="font-weight:650">' + esc((emp && emp.name) || S.me.empName || S.me.empCode) + "</div>" +
-      '<div class="muted small mono">' + esc(S.me.empCode) + " · " + esc(deviceLabel()) + "</div></div>" +
-      '<button class="btn sm ghost" data-action="unbind">Сменить</button></div>' +
-      '<div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">' +
-      '<span class="badge green"><span class="dot"></span>Авторизован на этом телефоне</span>' +
-      (S.me.verified ? '<span class="badge blue">подтверждён таблицей</span>' : '<span class="badge">локально</span>') +
-      "</div>" +
-      '<div class="muted small" style="margin-top:8px">Отметка проходит автоматически: сканируйте «ВХОД» или «ВЫХОД».</div>';
-  } else {
-    meBox.innerHTML = '<div class="me"><div class="avatar" style="background:#f1f5f9;color:#64748b">?</div>' +
-      '<div class="stack" style="gap:1px;flex:1"><div style="font-weight:650">Телефон не авторизован</div>' +
-      '<div class="muted small">Отсканируйте свой регистрационный QR один раз</div></div></div>';
+var boardTimer = null;
+function boardData() { return lsGet("tt_board", { rows: [], at: null, now: null }); }
+function saveBoard(d) { lsSet("tt_board", d); }
+
+function renderBoard() {
+  var d = boardData();
+  var rows = d.rows || [];
+  var onShift = rows.filter(function (r) { return r.onShift; });
+  var registered = rows.filter(function (r) { return r.registered; }).length;
+  var host = $("#boardMain");
+  var head = $("#boardHead");
+
+  head.innerHTML =
+    '<div class="row between"><div class="stack" style="gap:2px">' +
+      '<div style="font-size:26px;font-weight:800;letter-spacing:-.02em">' + onShift.length +
+        ' <span class="muted" style="font-size:15px;font-weight:600">на работе</span></div>' +
+      '<div class="muted small">' + (d.at ? "Обновлено " + esc(hhmm(d.at)) : "Данные ещё не загружены") + "</div>" +
+    "</div>" +
+    '<button class="btn sm primary" data-action="board-refresh">Обновить</button></div>' +
+    '<div class="row" style="margin-top:10px;gap:6px;flex-wrap:wrap">' +
+      '<span class="badge green">' + onShift.length + " на смене</span>" +
+      '<span class="badge">' + (registered - onShift.length) + " вне работы</span>" +
+      '<span class="badge blue">' + registered + " привязано телефонов</span>" +
+    "</div>";
+
+  if (!rows.length) {
+    host.innerHTML = '<div class="empty">Нет данных из таблицы.<br>Проверьте URL в настройках и нажмите «Обновить».</div>';
+    return;
   }
-  var rec = S.rec.slice().sort(function (a, b) { return new Date(b.ts) - new Date(a.ts); }).slice(0, 5);
-  var list = $("#recentList");
-  if (!rec.length) {
-    list.innerHTML = '<div class="empty">Пока нет отметок. Отсканируйте постер «ВХОД».</div>';
-  } else {
-    list.innerHTML = rec.map(function (r) {
-      var isIn = r.type === "in";
-      return '<div class="row between" style="padding:8px 0;border-bottom:1px solid #f1f5f9">' +
-        '<div class="row" style="gap:9px"><span class="badge ' + (isIn ? "green" : "blue") + '">' + (isIn ? "вход" : "выход") + "</span>" +
-        '<div class="stack" style="gap:0"><div style="font-weight:600;font-size:13.5px">' + esc(r.empName) + "</div>" +
-        '<div class="muted" style="font-size:11.5px">' + dmy(r.ts) + " · " + hhmm(r.ts) +
-        (r.noGeo ? " · без гео" : r.inZone ? " · в зоне" : " · вне зоны") + "</div></div></div>" +
-        '<span class="badge ' + (r.synced ? "green" : "") + '">' + (r.synced ? "✓" : "…") + "</span></div>";
-    }).join("");
+  host.innerHTML = rows.map(function (r) {
+    var inNow = r.onShift;
+    return '<div class="card tight" style="margin-bottom:8px;border-left:4px solid ' + (inNow ? "#16a34a" : "#e2e8f0") + '">' +
+      '<div class="row" style="gap:10px">' +
+        '<div class="avatar" style="width:36px;height:36px;font-size:13px;background:' + (inNow ? "#eafaf0" : "#f1f5f9") + ';color:' + (inNow ? "#15803d" : "#64748b") + '">' + esc(initials(r.empName || r.empCode)) + "</div>" +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-weight:650;font-size:14px">' + esc(r.empName || r.empCode) + "</div>" +
+          '<div class="muted" style="font-size:12px">' +
+            (r.lastType
+              ? (r.lastType === "вход" ? "вошёл " : "вышел ") + esc(r.lastTime) + " · " + esc(r.lastDate)
+              : "отметок ещё не было") +
+            (r.zone === "вне зоны" ? ' · <span style="color:#b91c1c">вне зоны</span>' : "") +
+          "</div>" +
+        "</div>" +
+        '<span class="badge ' + (inNow ? "green" : "red") + '">' + (inNow ? "на смене" : "не на смене") + "</span>" +
+      "</div></div>";
+  }).join("");
+}
+
+async function refreshBoard(silent) {
+  if (!S.set.sheetUrl) {
+    if (!silent) toast("Сначала укажите URL таблицы в настройках");
+    return;
   }
-  if (cam.running) setCamBtn(true);
+  if (!silent) toast("Обновляем…");
+  try {
+    var r = await jsonp(S.set.sheetUrl, { action: "board" });
+    if (r && r.ok) {
+      saveBoard({ rows: r.rows || [], at: new Date().toISOString(), now: r.now });
+      if (r.settings) {
+        if (r.settings.lat !== null) S.set.officeLat = String(r.settings.lat);
+        if (r.settings.lng !== null) S.set.officeLng = String(r.settings.lng);
+        if (r.settings.radius) S.set.radius = r.settings.radius;
+        saveSet();
+      }
+      if (current === "board") renderBoard();
+      if (!silent) toast("Обновлено: " + (r.rows || []).length + " сотрудников");
+    } else if (!silent) toast("Сервер вернул ошибку");
+  } catch (e) {
+    if (!silent) toast(e.message);
+  }
+}
+
+function startBoardTimer() {
+  if (boardTimer) clearInterval(boardTimer);
+  boardTimer = setInterval(function () { if (current === "board") refreshBoard(true); }, 60000);
 }
 
 var repRange = { from: null, to: null, emp: "" };
@@ -263,13 +303,13 @@ function renderSettings() {
 function unsyncedCount() { return S.rec.filter(function (r) { return !r.synced; }).length; }
 
 var NAV = [
-  { k: "scanner", t: "Сканер", d: "M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M3 12h18" },
+  { k: "board", t: "На смене", d: "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v1M17 4.5a4 4 0 0 1 0 7M18 15a5 5 0 0 1 4 5v1" },
   { k: "report", t: "Табель", d: "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" },
   { k: "codes", t: "QR-коды", d: "M3 3h6v6H3zM15 3h6v6h-6zM3 15h6v6H3zM15 15h2v2h-2zM19 15h2v2h-2zM15 19h2v2h-2zM19 19h2v2h-2z" },
   { k: "employees", t: "Люди", d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM22 21v-2a4 4 0 0 0-3-3.9" },
   { k: "settings", t: "Настройки", d: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM4 12a8 8 0 0 1 .2-1.8l-1.4-1.1 2-3.4 1.7.7A8 8 0 0 1 9 5.2L9.3 3.4h5.4L15 5.2c.6.3 1.2.7 1.7 1.2l1.7-.7 2 3.4-1.4 1.1A8 8 0 0 1 20 12a8 8 0 0 1-.2 1.8l1.4 1.1-2 3.4-1.7-.7c-.5.5-1.1.9-1.7 1.2l-.3 1.8H9.3L9 18.8a8 8 0 0 1-1.7-1.2l-1.7.7-2-3.4 1.4-1.1A8 8 0 0 1 4 12z" }
 ];
-var current = "scanner";
+var current = "board";
 
 function buildNav() {
   $("#nav").innerHTML = NAV.map(function (n) {
@@ -278,21 +318,22 @@ function buildNav() {
 }
 function show(view) {
   current = view;
-  if (view !== "scanner" && cam.running) camStop();
+  if (cam.running) camStop();
   NAV.forEach(function (n) {
     var sec = $("#v-" + n.k);
     if (sec) sec.classList.toggle("active", n.k === view);
     var b = $("#nav-" + n.k);
     if (b) b.classList.toggle("on", n.k === view);
   });
-  var titles = { scanner: "Сканер", report: "Табель", codes: "QR-коды", employees: "Сотрудники", settings: "Настройки" };
+  var titles = { board: "На смене", report: "Табель", codes: "QR-коды", employees: "Сотрудники", settings: "Настройки" };
   $("#topTitle").textContent = titles[view] || "";
-  $("#topSub").textContent = view === "scanner" ? "Приложите QR к камере" : "Учёт рабочего времени";
+  $("#topSub").textContent = view === "board" ? "Кто сейчас на работе" : "Учёт рабочего времени";
+  if (view === "board") renderBoard();
   if (view === "report") renderReport();
   if (view === "codes") renderCodes();
   if (view === "employees") renderEmployees();
   if (view === "settings") renderSettings();
-  if (view === "scanner") renderScanner();
+
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -306,11 +347,56 @@ function requireAdmin(fn, hint) {
   setTimeout(function () { var f = $("#adminCodeEntry"); if (f) f.focus(); }, 60);
 }
 
+async function readSheet() {
+  if (!S.set.sheetUrl) return toast("Сначала укажите URL таблицы в настройках");
+  toast("Загружаем отметки из таблицы…");
+  try {
+    var from = repRange.from ? new Date(repRange.from) : rangeFor("month").from;
+    var to = repRange.to ? new Date(new Date(repRange.to).setHours(23, 59, 59)) : new Date();
+    var r = await jsonp(S.set.sheetUrl, {
+      action: "read",
+      from: new Date(from.getFullYear(), from.getMonth(), from.getDate()).toISOString(),
+      to: to.toISOString()
+    });
+    if (!r || !r.ok) return toast("Сервер вернул ошибку");
+    var rows = r.rows || [];
+    if (!rows.length) { toast("За выбранный период отметок в таблице нет"); return; }
+    /* серверные отметки заменяют локальные: таблица — источник истины */
+    S.rec = rows.map(function (x, i) {
+      return {
+        id: "s" + i + x.ts, empCode: x.empCode, empName: x.empName, type: x.type, ts: x.ts,
+        lat: x.lat, lng: x.lng, accuracy: x.accuracy, distance: x.distance,
+        inZone: x.inZone, noGeo: x.lat === null, verified: true,
+        deviceId: "", deviceLabel: x.device, source: x.source, synced: true
+      };
+    });
+    saveRec();
+    renderReport();
+    toast("Загружено отметок: " + rows.length);
+  } catch (e) { toast(e.message); }
+}
+
+async function saveZone() {
+  if (!S.set.sheetUrl) return toast("Сначала укажите URL таблицы");
+  var lat = parseFloat(S.set.officeLat), lng = parseFloat(S.set.officeLng);
+  if (isNaN(lat) || isNaN(lng)) return toast("Введите координаты офиса или нажмите «Взять текущие»");
+  toast("Сохраняем геозону в таблицу…");
+  try {
+    var r = await jsonp(S.set.sheetUrl, {
+      action: "saveSettings", lat: lat, lng: lng, radius: Number(S.set.radius) || 100
+    });
+    if (r && r.ok) toast("Геозона сохранена: отметки будут проверяться на сервере");
+    else toast("Не удалось сохранить");
+  } catch (e) { toast(e.message); }
+}
+
 var actions = {
-  "cam-toggle": function () { camStart(); },
   "close": function () { closeModal(); },
-  "manual-submit": function () { manualPunch(); },
-  "go-report": function () { show("report"); },
+  "go-codes": function () { show("codes"); },
+  "board-refresh": function () { refreshBoard(false); },
+  "read-sheet": async function () { await readSheet(); },
+  "save-zone": async function () { await saveZone(); },
+  "open-emp": function () { window.open(empUrl({}), "_blank", "noopener"); },
   "period": function (el) {
     var r = rangeFor(el.dataset.period);
     repRange.from = r.from; repRange.to = r.to;
@@ -624,7 +710,7 @@ document.addEventListener("keydown", function (ev) {
 });
 
 buildNav();
-renderScanner();
 renderSettings();
-show("scanner");
-if (!camSupported()) { $("#camIdle").textContent = "Камера недоступна в этом браузере"; }
+show("board");
+startBoardTimer();
+if (S.set.sheetUrl) refreshBoard(true);

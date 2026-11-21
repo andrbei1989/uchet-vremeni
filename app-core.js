@@ -168,9 +168,25 @@ function qrDataUrl(text, size) {
     return url;
   } catch (e) { return null; }
 }
-function payloadIn() { return "TTQ|IN|v1"; }
-function payloadOut() { return "TTQ|OUT|v1"; }
-function payloadReg(emp) { return "TTR|" + emp.empCode + "|" + emp.token; }
+/* QR-коды — это обычные ссылки: их открывает штатный сканер Android и iPhone.
+   Адрес страницы сотрудника берётся от текущего сайта. */
+function empBase() {
+  var path = location.pathname.replace(/[^/]*$/, "");
+  return location.origin + path + "emp.html";
+}
+function empUrl(params) {
+  var parts = [];
+  Object.keys(params).forEach(function (k) {
+    if (params[k] !== undefined && params[k] !== null && params[k] !== "") {
+      parts.push(k + "=" + encodeURIComponent(params[k]));
+    }
+  });
+  if (S.set.sheetUrl) parts.push("s=" + encodeURIComponent(S.set.sheetUrl));
+  return empBase() + (parts.length ? "?" + parts.join("&") : "");
+}
+function payloadIn() { return empUrl({ t: "in" }); }
+function payloadOut() { return empUrl({ t: "out" }); }
+function payloadReg(emp) { return empUrl({ r: emp.empCode, k: emp.token }); }
 function qrImg(text, size) {
   var url = qrDataUrl(text, size);
   if (!url) return '<div class="empty">QR-библиотека не загрузилась — проверьте интернет и обновите страницу</div>';
