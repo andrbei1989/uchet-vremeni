@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2563eb">
+<title>Учёт рабочего времени</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <div class="row">
+      <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/></svg></div>
+      <div class="stack" style="gap:0;flex:1">
+        <h1 id="topTitle">Сканер</h1>
+        <div class="muted small" id="topSub">Учёт рабочего времени</div>
+      </div>
+    </div>
+  </header>
+  <main>
+    <section class="view active" id="v-scanner">
+      <div class="card" style="padding:12px">
+        <div class="cam-wrap" id="camWrap">
+          <div class="cam-idle" id="camIdle">Камера выключена</div>
+          <video id="cam" playsinline muted></video>
+          <div class="cam-frame"></div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn block" id="camBtn" data-action="cam-toggle">Включить камеру</button>
+        </div>
+        <div class="muted small" style="margin-top:8px">Сканируйте постер «ВХОД» или «ВЫХОД» у двери. Регистрационный код — один раз, при онбординге.</div>
+      </div>
+      <div class="card" id="meCard"></div>
+      <div class="card">
+        <h3>Ручной ввод</h3>
+        <div class="muted small" style="margin:2px 0 9px">Если камера недоступна — введите PIN сотрудника.</div>
+        <div class="row">
+          <input class="input mono" id="manualPin" inputmode="numeric" maxlength="6" placeholder="PIN · 6 цифр" style="letter-spacing:.2em;flex:1">
+          <select class="input" id="manualType" style="width:112px"><option value="in">Вход</option><option value="out">Выход</option></select>
+        </div>
+        <button class="btn primary block" style="margin-top:8px" data-action="manual-submit">Отметить</button>
+      </div>
+      <div class="card">
+        <div class="row between"><h3>Последние отметки</h3><button class="btn sm ghost" data-action="go-report">Табель</button></div>
+        <div id="recentList" style="margin-top:6px"></div>
+      </div>
+    </section>
+
+    <section class="view" id="v-report">
+      <div class="card">
+        <div class="grid3" style="margin-bottom:8px">
+          <button class="btn sm" data-action="period" data-period="day">Сегодня</button>
+          <button class="btn sm" data-action="period" data-period="week">Неделя</button>
+          <button class="btn sm" data-action="period" data-period="month">Месяц</button>
+        </div>
+        <div class="grid2">
+          <label class="field">С даты<input class="input" type="date" id="repFrom"></label>
+          <label class="field">По дату<input class="input" type="date" id="repTo"></label>
+        </div>
+        <label class="field" style="margin-top:8px">Сотрудник
+          <select class="input" id="repEmp"><option value="">Все сотрудники</option></select>
+        </label>
+      </div>
+      <div class="kpi" id="repKpi"></div>
+      <div class="card" style="padding:8px 10px"><div id="repList"></div></div>
+      <div class="card">
+        <h3>Экспорт</h3>
+        <div class="grid2" style="margin-top:8px">
+          <button class="btn" data-action="csv">Скачать CSV</button>
+          <button class="btn primary" data-action="send-period">В Google Таблицы</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="v-codes">
+      <div class="card">
+        <h3>Общие коды на входе</h3>
+        <div class="muted small" style="margin:2px 0 10px">Распечатайте и повесьте у двери. Одинаковы для всех сотрудников.</div>
+        <div class="grid2" id="posterBox"></div>
+        <div class="grid2" style="margin-top:10px">
+          <button class="btn" data-action="print-posters">Печать A4</button>
+          <button class="btn" data-action="download-posters">Скачать PNG</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row between"><h3>Регистрационные коды</h3><span class="badge blue" id="regCount">15</span></div>
+        <div class="warn" style="margin:8px 0">Коды одноразовые: после первой регистрации код привязывается к телефону сотрудника. Для нового телефона — «Перевыпустить» здесь или «Разрешить повторную регистрацию» в разделе «Сотрудники».</div>
+        <div class="qr-grid" id="regGrid"></div>
+        <div class="grid2" style="margin-top:10px">
+          <button class="btn" data-action="print-badges">Печать всех</button>
+          <button class="btn" data-action="download-all">Скачать все PNG</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="v-employees">
+      <div class="card">
+        <div class="row between">
+          <h3>Сотрудники</h3>
+          <div class="row">
+            <button class="btn sm" data-action="pins-toggle" id="pinsBtn">Показать PIN</button>
+            <button class="btn sm primary" data-action="add-emp">Добавить</button>
+          </div>
+        </div>
+        <div id="empList" style="margin-top:8px"></div>
+        <div class="grid2" style="margin-top:8px">
+          <button class="btn sm" data-action="export-pins">PIN в CSV</button>
+          <button class="btn sm" data-action="regen-all">Перевыпустить все</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row between"><h3>Регистрации на сервере</h3><button class="btn sm" data-action="load-server">Загрузить</button></div>
+        <div class="muted small" style="margin:2px 0 8px">Кто и с какого телефона зарегистрирован. Здесь же отзыв доступа.</div>
+        <div id="serverList"></div>
+      </div>
+    </section>
+
+    <section class="view" id="v-settings">
+      <div class="card">
+        <div class="row between"><h3>Онлайн-регистрация</h3><span class="badge" id="pingBadge">не настроено</span></div>
+        <div class="muted small" style="margin:2px 0 9px">Google Таблица делает регистрационные коды одноразовыми и позволяет отзывать доступ.</div>
+        <label class="field">URL веб-приложения Apps Script
+          <input class="input mono" data-set="sheetUrl" placeholder="https://script.google.com/macros/s/…/exec">
+        </label>
+        <div class="grid2" style="margin-top:8px">
+          <button class="btn" data-action="ping">Проверить соединение</button>
+          <button class="btn ghost" data-action="queue-send" id="queueBtn">Очередь</button>
+        </div>
+        <div class="sep"></div>
+        <label class="chk"><input type="checkbox" data-set="checkRegistration"> Проверять код при регистрации</label>
+        <label class="chk"><input type="checkbox" data-set="checkAttendance"> Проверять доступ при отметке</label>
+        <label class="field" style="margin-top:8px">Телефон администратора
+          <input class="input" data-set="adminPhone" placeholder="+373 …">
+        </label>
+        <details class="acc" style="margin-top:10px">
+          <summary>Инструкция и код Apps Script</summary>
+          <ol class="small muted" style="padding-left:18px;margin:8px 0">
+            <li>Создайте Google Таблицу.</li>
+            <li>Расширения → Apps Script.</li>
+            <li>Вставьте код ниже, сохраните.</li>
+            <li>Развернуть → Новое развёртывание → Веб-приложение. «Запуск от имени»: Я. «Доступ»: Все.</li>
+            <li>Скопируйте ссылку на /exec в поле выше.</li>
+          </ol>
+          <button class="btn sm" data-action="copy-gs">Копировать код</button>
+          <pre class="code" id="gsPre" style="margin-top:8px"></pre>
+        </details>
+      </div>
+      <div class="card">
+        <h3>Геозона офиса</h3>
+        <div class="grid2" style="margin-top:8px">
+          <label class="field">Широта<input class="input mono" data-set="officeLat" placeholder="47.0245"></label>
+          <label class="field">Долгота<input class="input mono" data-set="officeLng" placeholder="28.8322"></label>
+        </div>
+        <div class="grid2" style="margin-top:8px">
+          <label class="field">Радиус, м<input class="input" type="number" data-set="radius" min="10" step="10"></label>
+          <button class="btn" data-action="take-coords" style="align-self:end">Взять текущие</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Рабочее время</h3>
+        <div class="grid2" style="margin-top:8px">
+          <label class="field">Начало<input class="input" type="time" data-set="workStart"></label>
+          <label class="field">Конец<input class="input" type="time" data-set="workEnd"></label>
+        </div>
+        <div class="grid2" style="margin-top:8px">
+          <label class="field">Обед, мин<input class="input" type="number" data-set="lunchMinutes" min="0" step="15"></label>
+          <label class="field">Допуск, мин<input class="input" type="number" data-set="lateTolerance" min="0" step="5"></label>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Доступ</h3>
+        <label class="field" style="margin-top:8px">Код администратора
+          <input class="input mono" type="password" inputmode="numeric" maxlength="8" data-set="adminPin">
+          <span class="hint">Это код доступа к PIN сотрудников — не PIN сотрудника. Хранится в этом браузере.</span>
+        </label>
+        <label class="chk" style="margin-top:6px"><input type="checkbox" data-set="allowManualPin"> Разрешить ручной ввод PIN</label>
+      </div>
+      <div class="card">
+        <h3>Данные</h3>
+        <div class="muted small" style="margin:2px 0 8px">Отметки хранятся в этом браузере. Перед очисткой сделайте резервную копию.</div>
+        <div class="col">
+          <button class="btn" data-action="backup">Экспорт всех данных (JSON)</button>
+          <button class="btn danger" data-action="clear-records">Очистить отметки</button>
+        </div>
+      </div>
+      <footer class="foot">версия 3.0 · одноразовая регистрация через Google Таблицы</footer>
+    </section>
+  </main>
+  <nav class="bottom" id="nav"></nav>
+</div>
+<div id="modalHost"></div>
+<div class="toast" id="toast"></div>
+<div id="printArea"></div>
+
+<script type="text/plain" id="gsSrc">/** Учёт рабочего времени — приёмник Google Apps Script.
+ * 1. Создайте Google Таблицу.
+ * 2. Расширения — Apps Script, вставьте код целиком, сохраните.
+ * 3. Развернуть — Новое развёртывание — Веб-приложение, «Запуск от имени: Я», «Доступ: Все».
+ * 4. Скопируйте ссылку на /exec и вставьте её в приложении: Настройки — URL.
+ * Листы «Отметки» и «Регистрации» создадутся сами при первом запросе.
+ */
+var SHEET_ATT = 'Отметки';
+var SHEET_REG = 'Регистрации';
+var HEAD_ATT = ['Дата','Время','Код','ФИО','PIN (3)','Тип','Широта','Долгота','Точность (м)','Расстояние (м)','В зоне','Источник','Устройство'];
+var HEAD_REG = ['Дата регистрации','Код','ФИО','PIN','Device ID','Устройство','Статус','Обновлено'];
+
+function doGet(e) {
+  var p = (e && e.parameter) || {};
+  var cb = p.callback || '';
+  var res;
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+    var a = String(p.action || '');
+    if (a === 'ping') res = { ok: true, ts: new Date().toISOString() };
+    else if (a === 'register') res = ttRegister(p);
+    else if (a === 'check') res = ttCheck(p);
+    else if (a === 'append') res = ttAppend(p);
+    else if (a === 'revoke') res = ttRevoke(p);
+    else if (a === 'status') res = ttStatus();
+    else res = { ok: false, error: 'unknown_action' };
+  } catch (err) {
+    res = { ok: false, error: String(err) };
+  } finally {
+    try { lock.releaseLock(); } catch (ignore) {}
+  }
+  var out = cb ? cb + '(' + JSON.stringify(res) + ')' : JSON.stringify(res);
+  return ContentService.createTextOutput(out).setMimeType(cb ? ContentService.MimeType.JAVASCRIPT : ContentService.MimeType.JSON);
+}
+function ttSheet(name, headers) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(name);
+  if (!sh) {
+    sh = ss.insertSheet(name);
+    sh.appendRow(headers);
+    sh.setFrozenRows(1);
+    sh.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+  }
+  return sh;
+}
+function ttAtt() { return ttSheet(SHEET_ATT, HEAD_ATT); }
+function ttReg() { return ttSheet(SHEET_REG, HEAD_REG); }
+function ttRows(sh) {
+  var last = sh.getLastRow();
+  if (last < 2) return [];
+  return sh.getRange(2, 1, last - 1, Math.max(sh.getLastColumn(), 1)).getValues();
+}
+function ttFmt(d) {
+  if (!d) return '';
+  return Utilities.formatDate(new Date(d), Session.getScriptTimeZone(), 'dd.MM.yyyy HH:mm');
+}
+function ttPick(p, names) {
+  for (var i = 0; i < names.length; i++) {
+    var v = p[names[i]];
+    if (v !== undefined && v !== null && String(v) !== '') return String(v);
+  }
+  return '';
+}
+function ttRecord(p) {
+  if (!p.record) return {};
+  try { return JSON.parse(p.record); } catch (err) { return {}; }
+}
+function ttRegister(p) {
+  var sh = ttReg();
+  var data = ttRows(sh);
+  var now = new Date();
+  var code = ttPick(p, ['empCode','code','employee']);
+  var pin = ttPick(p, ['pin','pinCode']);
+  var device = ttPick(p, ['deviceId','device']);
+  var label = ttPick(p, ['deviceLabel','deviceName','device']);
+  var name = ttPick(p, ['empName','name']);
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][1]) === code) {
+      var row = i + 2;
+      var bound = String(data[i][4] || '');
+      if (bound && bound !== device) {
+        return { ok: false, error: 'used', empName: data[i][2], boundAt: ttFmt(data[i][0]) };
+      }
+      sh.getRange(row, 5, 1, 4).setValues([[device, label, 'активен', now]]);
+      return { ok: true, repeat: true, pin: data[i][3], empCode: code, empName: data[i][2] };
+    }
+  }
+  sh.appendRow([now, code, name, pin, device, label, 'активен', now]);
+  return { ok: true, first: true, pin: pin, empCode: code, empName: name };
+}
+function ttCheck(p) {
+  var data = ttRows(ttReg());
+  var code = ttPick(p, ['empCode','code','employee']);
+  var pin = ttPick(p, ['pin','pinCode']);
+  for (var i = 0; i < data.length; i++) {
+    var byCode = code && String(data[i][1]) === code;
+    var byPin = pin && String(data[i][3]) === pin;
+    if (byCode || byPin) {
+      if (String(data[i][6]) === 'заблокирован') return { ok: false, error: 'blocked', empCode: data[i][1] };
+      return { ok: true, status: 'active', empCode: data[i][1], empName: data[i][2] };
+    }
+  }
+  return { ok: false, error: 'not_registered' };
+}
+function ttAppend(p) {
+  var r = ttRecord(p);
+  var code = ttPick(p, ['empCode','code']) || String(r.empCode || '');
+  var name = ttPick(p, ['empName','name']) || String(r.empName || '');
+  var type = ttPick(p, ['type']) || String(r.type || '');
+  var pin = String(r.pin || '');
+  var ts = r.ts ? new Date(r.ts) : new Date();
+  var tz = Session.getScriptTimeZone();
+  var date = Utilities.formatDate(ts, tz, 'dd.MM.yyyy');
+  var time = Utilities.formatDate(ts, tz, 'HH:mm:ss');
+  var lat = r.lat !== undefined && r.lat !== null ? r.lat : '';
+  var lng = r.lng !== undefined && r.lng !== null ? r.lng : '';
+  var acc = r.accuracy !== undefined && r.accuracy !== null ? r.accuracy : '';
+  var dist = r.distance !== undefined && r.distance !== null ? r.distance : '';
+  var inZone = r.inZone === true || r.inZone === 'true' || r.inZone === 1 ? 'да' : 'нет';
+  var source = r.source === 'manual' ? 'ручной' : 'QR';
+  var device = String(r.deviceLabel || r.device || '');
+  ttAtt().appendRow([date, time, code, name, pin ? pin.slice(-3) : '', type === 'out' ? 'выход' : 'вход', lat, lng, acc, dist, inZone, source, device]);
+  return { ok: true };
+}
+function ttRevoke(p) {
+  var sh = ttReg();
+  var data = ttRows(sh);
+  var code = ttPick(p, ['empCode','code']);
+  var unblock = String(p.unblock) === 'true' || String(p.unblock) === '1';
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][1]) === code) {
+      var row = i + 2;
+      if (unblock) { sh.getRange(row, 5, 1, 3).setValues([['', '', 'активен']]); }
+      else { sh.getRange(row, 7).setValue('заблокирован'); }
+      sh.getRange(row, 8).setValue(new Date());
+      return { ok: true, empCode: code, unblock: unblock };
+    }
+  }
+  return { ok: false, error: 'not_found' };
+}
+function ttStatus() {
+  var data = ttRows(ttReg());
+  var rows = [];
+  for (var i = 0; i < data.length; i++) {
+    rows.push({ empCode: String(data[i][1] || ''), empName: String(data[i][2] || ''), pin: String(data[i][3] || ''), deviceId: String(data[i][4] || ''), deviceLabel: String(data[i][5] || ''), boundAt: ttFmt(data[i][0]), status: String(data[i][6] || '') });
+  }
+  return { ok: true, rows: rows };
+}</script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+
+<script src="app-core.js"></script>
+<script src="app-views.js"></script>
+
+</body>
+</html>
+
