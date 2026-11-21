@@ -27,7 +27,7 @@ var DEFAULT_SETTINGS = {
   sheetUrl: "", checkRegistration: false, checkAttendance: false, adminPhone: "",
   officeLat: "", officeLng: "", radius: 100,
   workStart: "09:00", workEnd: "18:00", lunchMinutes: 60, lateTolerance: 10,
-  adminPin: "1234", allowManualPin: true
+  adminPin: "1234", allowManualPin: false
 };
 
 function makeEmployees(n) {
@@ -83,19 +83,13 @@ function findEmp(code) {
   for (var i = 0; i < S.emp.length; i++) if (S.emp[i].empCode === code) return S.emp[i];
   return null;
 }
-function pinFor(emp) {
-  var str = String(emp.token) + String(emp.empCode), hash = 2166136261, i;
-  for (i = 0; i < str.length; i++) { hash ^= str.charCodeAt(i); hash = Math.imul(hash, 16777619); }
-  var s = String((hash >>> 0) % 1000000).padStart(6, "0");
-  if (s[0] === "0") s = "1" + s.slice(1);
-  return s;
+/* ключ устройства = секрет из регистрационного QR; сотруднику он не показывается */
+function empKey(emp) { return String(emp.token || ""); }
+function findEmpByCode(code) {
+  var c = String(code || "").trim().toUpperCase();
+  if (/^\d{1,3}$/.test(c)) c = "EMP-" + c.padStart(3, "0");
+  return findEmp(c);
 }
-function findEmpByPin(pin) {
-  for (var i = 0; i < S.emp.length; i++) if (pinFor(S.emp[i]) === pin) return S.emp[i];
-  return null;
-}
-function fmtPin(pin) { return "••• " + String(pin || "").slice(-3); }
-function pinSpaced(pin) { return String(pin || "").replace(/(\d{3})(?=\d)/g, "$1 "); }
 
 function haversine(lat1, lon1, lat2, lon2) {
   var R = 6371000, toR = Math.PI / 180;
@@ -291,77 +285,91 @@ async function startRegistration(code, token) {
       '<button class="btn block primary" style="margin-top:14px" data-action="close">Понятно</button>');
     return;
   }
-  var pin = pinFor(emp);
-  if (S.me && S.me.empCode === emp.empCode) { showPinSheet(emp, pin, "repeat"); return; }
+  if (S.me && S.me.empCode === emp.empCode) { showAuthorized(emp, "repeat"); return; }
 
   if (S.set.sheetUrl && S.set.checkRegistration) {
-    openModal(spinnerSheet("Проверяем код…", "Это займёт пару секунд"), { closable: false });
+    openModal(spinnerSheet("Авторизуем устройство…", "Проверяем код в таблице"), { closable: false });
     var reply;
     try {
       reply = await jsonp(S.set.sheetUrl, {
         action: "register", token: token, empCode: emp.empCode, empName: emp.name,
-        pin: pin, deviceId: S.dev, deviceLabel: deviceLabel()
+        key: empKey(emp), deviceId: S.dev, deviceLabel: deviceLabel()
       });
     } catch (e) {
       openModal(sheetHead("Сервер недоступен", e.message) +
-        '<div class="warn" style="margin-top:10px">Проверка включена, поэтому без связи регистрация не выполняется — так одноразовый код нельзя использовать дважды.</div>' +
+        '<div class="warn" style="margin-top:10px">Проверка включена, поэтому без связи авторизация не выполняется — так одноразовый код нельзя использовать дважды.</div>' +
         '<div class="col" style="margin-top:14px">' +
         '<button class="btn primary" data-action="reg-retry" data-code="' + esc(code) + '" data-token="' + esc(token) + '">Повторить</button>' +
-        '<button class="btn" data-action="bind-local" data-code="' + esc(code) + '">Зарегистрироваться без проверки</button>' +
+        '<button class="btn" data-action="bind-local" data-code="' + esc(code) + '">Авторизоваться без проверки</button>' +
         '<button class="btn ghost" data-action="close">Отмена</button></div>');
       return;
     }
-    if (reply && reply.ok === false && reply.error === "used") {
-      openModal(sheetHead("Этот код уже использован", "Одноразовый код привязан к другому телефону.") +
+    if (reply && reply.ok === false && (reply.error === "used" || reply.error === "device_mismatch")) {
+      openModal(sheetHead("Код уже использован", "Этот код авторизован на другом телефоне.") +
         '<div class="err" style="margin-top:10px">Зарегистрирован: ' + esc(reply.empName || emp.name) +
         (reply.boundAt ? " · " + esc(reply.boundAt) : "") + "</div>" +
-        '<div class="muted small" style="margin-top:10px">Чтобы привязать новый телефон: «Сотрудники» → «Разрешить повторную регистрацию» для ' + esc(emp.empCode) + ", затем отсканируйте код заново.</div>" +
+        '<div class="muted small" style="margin-top:10px">Чтобы авторизовать новый телефон: «Сотрудники» → «Разрешить повторную регистрацию» для ' + esc(emp.empCode) + ", затем отсканируйте код заново.</div>" +
         '<button class="btn block primary" style="margin-top:14px" data-action="close">Понятно</button>');
       return;
     }
     if (!reply || reply.ok === false) {
-      openModal(sheetHead("Не удалось зарегистрировать", "Сервер вернул ошибку.") +
+      openModal(sheetHead("Не удалось авторизоваться", "Сервер вернул ошибку.") +
         '<div class="err" style="margin-top:10px">' + esc((reply && reply.error) || "неизвестная ошибка") + "</div>" +
         '<button class="btn block primary" style="margin-top:14px" data-action="close">Понятно</button>');
       return;
     }
-    bindDevice(emp, pin, true);
+    bindDevice(emp, true);
     return;
   }
 
   if (S.me && S.me.empCode !== emp.empCode) {
     pendingReg = { code: code, token: token };
-    openModal(sheetHead("Сменить сотрудника?", "Телефон привязан к " + (S.me.empName || S.me.empCode) + ".") +
-      '<div class="muted small" style="margin-top:6px">Новый PIN заменит предыдущий на этом устройстве.</div>' +
+    openModal(sheetHead("Сменить сотрудника?", "Телефон авторизован как " + (S.me.empName || S.me.empCode) + ".") +
+      '<div class="muted small" style="margin-top:6px">Новая авторизация заменит предыдущую на этом устройстве.</div>' +
       '<div class="col" style="margin-top:14px">' +
-      '<button class="btn primary" data-action="bind-yes">Привязать ' + esc(emp.name) + "</button>" +
+      '<button class="btn primary" data-action="bind-yes">Войти как ' + esc(emp.name) + "</button>" +
       '<button class="btn ghost" data-action="close">Отмена</button></div>');
     return;
   }
-  bindDevice(emp, pin, false);
+  bindDevice(emp, false);
 }
 
-function bindDevice(emp, pin, verified) {
-  S.me = { empCode: emp.empCode, empName: emp.name, pin: pin, deviceId: S.dev, deviceLabel: deviceLabel(), boundAt: new Date().toISOString(), token: emp.token, verified: !!verified };
+function bindDevice(emp, verified) {
+  S.me = {
+    empCode: emp.empCode, empName: emp.name,
+    deviceId: S.dev, deviceLabel: deviceLabel(),
+    boundAt: new Date().toISOString(), token: emp.token, verified: !!verified
+  };
   emp.boundAt = S.me.boundAt;
   emp.verified = !!verified;
   emp.device = deviceLabel();
   saveMe(); saveEmp();
-  showPinSheet(emp, pin, "first");
+  showAuthorized(emp, "first");
 }
 
-function showPinSheet(emp, pin, mode) {
-  openModal(sheetHead(mode === "repeat" ? "Вы уже зарегистрированы" : "Регистрация завершена", emp.name + " · " + emp.empCode) +
-    '<div class="pinbig" style="margin-top:14px">' + esc(pinSpaced(pin)) + "</div>" +
-    '<div class="muted small" style="margin-top:10px;text-align:center">PIN сохранён на этом телефоне и подставляется автоматически при отметке. Показывать его никому не нужно.</div>' +
-    '<button class="btn block ghost" style="margin-top:12px" data-action="copy-pin" data-pin="' + esc(pin) + '">Скопировать PIN</button>' +
-    '<button class="btn block primary" style="margin-top:8px" data-action="close">Готово</button>');
+/* Экран после авторизации: никакого PIN — только подтверждение, что устройство привязано */
+function showAuthorized(emp, mode) {
+  openModal(
+    sheetHead(mode === "repeat" ? "Вы уже авторизованы" : "Телефон авторизован", emp.name + " · " + emp.empCode) +
+    '<div class="row" style="margin-top:16px;gap:12px">' +
+      '<div class="avatar" style="width:52px;height:52px;font-size:18px">' + esc(initials(emp.name)) + "</div>" +
+      '<div class="stack" style="gap:2px"><div style="font-weight:700">' + esc(emp.name) + "</div>" +
+      '<div class="muted small">' + esc(emp.empCode) + " · " + esc(deviceLabel()) + "</div></div>" +
+    "</div>" +
+    '<div class="ok" style="margin-top:14px"><b>Готово.</b> Приложение узнаёт вас по этому телефону — вводить ничего не нужно.</div>' +
+    '<div class="stack" style="gap:6px;font-size:13px;margin-top:12px">' +
+      '<div class="muted">Что дальше: сканируйте постер «ВХОД» у двери при приходе и «ВЫХОД» при уходе.</div>' +
+      '<div class="muted">PIN не нужен и нигде не показывается: авторизация хранится в памяти телефона.</div>' +
+      (mode === "repeat" ? "" : '<div class="muted">Если телефон потеряется — администратор отзовёт доступ и выдаст новый код.</div>') +
+    "</div>" +
+    '<button class="btn block primary" style="margin-top:16px" data-action="close">Готово</button>'
+  );
 }
 
 async function startPunch(type) {
   if (!S.me) {
-    openModal(sheetHead("Вы не зарегистрированы", "На этом телефоне нет PIN сотрудника.") +
-      '<div class="muted small" style="margin-top:6px">Отсканируйте свой регистрационный QR-код или введите PIN вручную на главном экране.</div>' +
+    openModal(sheetHead("Телефон не авторизован", "Приложение не знает, кто вы.") +
+      '<div class="muted small" style="margin-top:6px">Отсканируйте свой регистрационный QR-код — это одна кнопка. После этого отметки будут проходить сами.</div>' +
       '<button class="btn block primary" style="margin-top:14px" data-action="close">Понятно</button>');
     return;
   }
@@ -387,7 +395,7 @@ async function startPunch(type) {
     openModal(spinnerSheet("Проверяем доступ…", emp.name), { closable: false });
     var chk;
     try {
-      chk = await jsonp(S.set.sheetUrl, { action: "check", token: S.me.token, empCode: emp.empCode, pin: S.me.pin, deviceId: S.dev });
+      chk = await jsonp(S.set.sheetUrl, { action: "check", token: S.me.token, empCode: emp.empCode, key: empKey(emp), deviceId: S.dev });
     } catch (e) {
       openModal(sheetHead("Сервер недоступен", e.message) +
         '<div class="warn" style="margin-top:10px">Можно отметить без проверки — запись уйдёт в таблицу при следующей синхронизации.</div>' +
@@ -406,8 +414,16 @@ async function startPunch(type) {
         return;
       }
       if (chk.error === "not_registered") {
-        openModal(sheetHead("Телефон не зарегистрирован", "В таблице нет привязки для " + emp.empCode + ".") +
-          '<div class="muted small" style="margin-top:6px">Отсканируйте свой регистрационный QR-код.</div>' +
+        openModal(sheetHead("Телефон не авторизован", "В таблице нет привязки для " + emp.empCode + ".") +
+          '<div class="muted small" style="margin-top:6px">Отсканируйте свой регистрационный QR-код один раз.</div>' +
+          '<button class="btn block primary" style="margin-top:14px" data-action="close">Понятно</button>');
+        return;
+      }
+      if (chk.error === "device_mismatch" || chk.error === "invalid_key") {
+        openModal(sheetHead("Этот телефон не авторизован", "Код сотрудника " + emp.empCode + " привязан к другому устройству.") +
+          '<div class="err" style="margin-top:10px">Запись не создана.</div>' +
+          '<div class="muted small" style="margin-top:10px">Обратитесь к администратору: он разрешит повторную регистрацию, и вы отсканируете свой QR заново.</div>' +
+          (S.set.adminPhone ? '<div class="muted small" style="margin-top:6px">Администратор: ' + esc(S.set.adminPhone) + "</div>" : "") +
           '<button class="btn block primary" style="margin-top:14px" data-action="close">Понятно</button>');
         return;
       }
@@ -440,7 +456,7 @@ function showConfirm(emp, type, verified, coords) {
   var color = type === "in" ? "var(--green)" : "var(--accent)";
   var warnings = shiftWarnings(emp, type);
   punchDraft = {
-    empCode: emp.empCode, empName: emp.name, pin: S.me ? S.me.pin : "",
+    empCode: emp.empCode, empName: emp.name,
     type: type, ts: now.toISOString(),
     lat: coords ? Number(coords.latitude.toFixed(6)) : null,
     lng: coords ? Number(coords.longitude.toFixed(6)) : null,
@@ -473,7 +489,7 @@ function showConfirm(emp, type, verified, coords) {
 function proceedPunchNoGeo(emp, type, verified) {
   var zone = zoneInfo(null, null);
   punchDraft = {
-    empCode: emp.empCode, empName: emp.name, pin: S.me ? S.me.pin : "", type: type, ts: new Date().toISOString(),
+    empCode: emp.empCode, empName: emp.name, type: type, ts: new Date().toISOString(),
     lat: null, lng: null, accuracy: null, distance: zone.distance, inZone: false, noGeo: true,
     verified: !!verified, deviceId: S.dev, deviceLabel: deviceLabel(), source: window.__punchSource || "qr"
   };

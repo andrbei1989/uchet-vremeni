@@ -7,14 +7,17 @@ function renderScanner() {
     meBox.innerHTML =
       '<div class="me"><div class="avatar">' + esc(initials((emp && emp.name) || S.me.empName)) + "</div>" +
       '<div class="stack" style="gap:1px;flex:1"><div style="font-weight:650">' + esc((emp && emp.name) || S.me.empName || S.me.empCode) + "</div>" +
-      '<div class="muted small mono">' + esc(S.me.empCode) + " · PIN " + esc(fmtPin(S.me.pin)) + "</div></div>" +
+      '<div class="muted small mono">' + esc(S.me.empCode) + " · " + esc(deviceLabel()) + "</div></div>" +
       '<button class="btn sm ghost" data-action="unbind">Сменить</button></div>' +
-      (S.me.verified ? '<div class="badge green" style="margin-top:8px">Привязан к этому телефону · подтверждён таблицей</div>'
-        : '<div class="badge" style="margin-top:8px">Локальная привязка</div>');
+      '<div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">' +
+      '<span class="badge green"><span class="dot"></span>Авторизован на этом телефоне</span>' +
+      (S.me.verified ? '<span class="badge blue">подтверждён таблицей</span>' : '<span class="badge">локально</span>') +
+      "</div>" +
+      '<div class="muted small" style="margin-top:8px">Отметка проходит автоматически: сканируйте «ВХОД» или «ВЫХОД».</div>';
   } else {
     meBox.innerHTML = '<div class="me"><div class="avatar" style="background:#f1f5f9;color:#64748b">?</div>' +
-      '<div class="stack" style="gap:1px;flex:1"><div style="font-weight:650">Телефон не привязан</div>' +
-      '<div class="muted small">Отсканируйте свой регистрационный QR</div></div></div>';
+      '<div class="stack" style="gap:1px;flex:1"><div style="font-weight:650">Телефон не авторизован</div>' +
+      '<div class="muted small">Отсканируйте свой регистрационный QR один раз</div></div></div>';
   }
   var rec = S.rec.slice().sort(function (a, b) { return new Date(b.ts) - new Date(a.ts); }).slice(0, 5);
   var list = $("#recentList");
@@ -192,33 +195,38 @@ function renderCodes() {
   }).join("");
 }
 
-var pinsVisible = false;
 function renderEmployees() {
-  $("#empList").innerHTML = S.emp.map(function (e) {
-    var pin = pinFor(e);
-    var srv = serverRow(e.empCode);
-    var bound = (srv && srv.deviceId) ? "сервер" : (e.boundAt ? "локально" : "");
-    var status = srv
-      ? (srv.status === "заблокирован" ? '<span class="badge red">заблокирован</span>' : '<span class="badge green">активен</span>')
-      : (e.boundAt ? '<span class="badge blue">привязан</span>' : '<span class="badge">не зарегистрирован</span>');
-    return '<div class="card tight" style="margin-bottom:8px">' +
-      '<div class="row" style="gap:9px">' +
-      '<div class="avatar" style="width:34px;height:34px;font-size:12px">' + esc(initials(e.name)) + "</div>" +
-      '<div style="flex:1;min-width:0"><input class="input" style="min-height:36px;padding:6px 9px;font-size:13.5px;font-weight:600" data-emp-name="' + esc(e.empCode) + '" value="' + esc(e.name) + '">' +
-      '<div class="row" style="margin-top:5px;gap:5px;flex-wrap:wrap">' +
-      '<span class="badge mono">' + esc(e.empCode) + "</span>" +
-      '<span class="badge mono">' + (pinsVisible ? esc(pin) : esc(fmtPin(pin))) + "</span>" +
-      status + (bound ? '<span class="badge">' + esc(bound) + "</span>" : "") +
-      "</div></div>" +
-      '<input type="checkbox" style="width:20px;height:20px;accent-color:var(--accent)" data-emp-active="' + esc(e.empCode) + '"' + (e.active === false ? "" : " checked") + ">" +
-      "</div>" +
-      '<div class="row" style="margin-top:8px;gap:5px;flex-wrap:wrap">' +
-      '<button class="btn sm ghost" data-action="show-qr" data-code="' + esc(e.empCode) + '">QR</button>' +
-      '<button class="btn sm ghost" data-action="regen-one" data-code="' + esc(e.empCode) + '">Перевыпустить</button>' +
-      (srv ? '<button class="btn sm danger" data-action="revoke" data-code="' + esc(e.empCode) + '">Отозвать</button>' +
-             '<button class="btn sm ghost" data-action="unblock" data-code="' + esc(e.empCode) + '">Разрешить</button>' : "") +
-      "</div></div>";
-  }).join("");
+  var linked = 0;
+  S.emp.forEach(function (e) { if ((serverRow(e.empCode) && serverRow(e.empCode).deviceId) || e.boundAt) linked++; });
+  $("#empList").innerHTML =
+    '<div class="row between" style="margin-bottom:8px"><span class="muted small">Авторизовано телефонов</span>' +
+    '<span class="badge blue">' + linked + " из " + S.emp.length + "</span></div>" +
+    S.emp.map(function (e) {
+      var srv = serverRow(e.empCode);
+      var bound = (srv && srv.deviceId) ? "таблица" : (e.boundAt ? "локально" : "");
+      var deviceName = (srv && srv.deviceLabel) || e.device || "";
+      var status = srv
+        ? (srv.status === "заблокирован" ? '<span class="badge red">доступ отозван</span>' : '<span class="badge green">авторизован</span>')
+        : (e.boundAt ? '<span class="badge blue">авторизован</span>' : '<span class="badge">не авторизован</span>');
+      return '<div class="card tight" style="margin-bottom:8px">' +
+        '<div class="row" style="gap:9px">' +
+        '<div class="avatar" style="width:34px;height:34px;font-size:12px">' + esc(initials(e.name)) + "</div>" +
+        '<div style="flex:1;min-width:0"><input class="input" style="min-height:36px;padding:6px 9px;font-size:13.5px;font-weight:600" data-emp-name="' + esc(e.empCode) + '" value="' + esc(e.name) + '">' +
+        '<div class="row" style="margin-top:5px;gap:5px;flex-wrap:wrap">' +
+        '<span class="badge mono">' + esc(e.empCode) + "</span>" +
+        status +
+        (bound ? '<span class="badge">' + esc(bound) + "</span>" : "") +
+        (deviceName ? '<span class="badge">' + esc(deviceName) + "</span>" : "") +
+        "</div></div>" +
+        '<input type="checkbox" style="width:20px;height:20px;accent-color:var(--accent)" data-emp-active="' + esc(e.empCode) + '"' + (e.active === false ? "" : " checked") + ">" +
+        "</div>" +
+        '<div class="row" style="margin-top:8px;gap:5px;flex-wrap:wrap">' +
+        '<button class="btn sm ghost" data-action="show-qr" data-code="' + esc(e.empCode) + '">QR</button>' +
+        '<button class="btn sm ghost" data-action="regen-one" data-code="' + esc(e.empCode) + '">Перевыпустить QR</button>' +
+        (srv ? '<button class="btn sm danger" data-action="revoke" data-code="' + esc(e.empCode) + '">Отозвать доступ</button>' +
+               '<button class="btn sm ghost" data-action="unblock" data-code="' + esc(e.empCode) + '">Разрешить вход</button>' : "") +
+        "</div></div>";
+    }).join("");
 
   var rows = (S.srv && S.srv.rows) || [];
   var host = $("#serverList");
@@ -226,11 +234,11 @@ function renderEmployees() {
     host.innerHTML = '<div class="empty">Нет данных. Заполните URL в настройках и нажмите «Загрузить».</div>';
     return;
   }
-  host.innerHTML = '<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Код</th><th>ФИО</th><th>PIN</th><th>Устройство</th><th>Дата</th><th>Статус</th><th></th></tr></thead><tbody>' +
+  host.innerHTML = '<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Код</th><th>ФИО</th><th>Устройство</th><th>Дата</th><th>Статус</th><th></th></tr></thead><tbody>' +
     rows.map(function (r) {
       var blocked = r.status === "заблокирован";
       return '<tr><td class="mono" style="font-size:11.5px">' + esc(r.empCode) + "</td><td>" + esc(r.empName) + "</td>" +
-        '<td class="mono">' + esc(r.pin) + "</td><td>" + esc(r.deviceLabel) + "</td><td>" + esc(r.boundAt) + "</td>" +
+        "<td>" + esc(r.deviceLabel || "—") + "</td><td>" + esc(r.boundAt) + "</td>" +
         "<td>" + (blocked ? '<span class="badge red">блок</span>' : '<span class="badge green">активен</span>') + "</td>" +
         '<td><button class="btn sm ghost" data-action="' + (blocked ? "unblock" : "revoke") + '" data-code="' + esc(r.empCode) + '">' +
         (blocked ? "Разрешить" : "Отозвать") + "</button></td></tr>";
@@ -288,6 +296,16 @@ function show(view) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+var adminPending = null;
+function requireAdmin(fn, hint) {
+  adminPending = fn;
+  openModal(sheetHead("Код администратора", hint || "Подтвердите действие") +
+    '<input class="input mono" type="password" inputmode="numeric" id="adminCodeEntry" style="margin-top:12px" placeholder="••••">' +
+    '<div class="col" style="margin-top:12px"><button class="btn primary" data-action="admin-unlock">Подтвердить</button>' +
+    '<button class="btn ghost" data-action="close">Отмена</button></div>');
+  setTimeout(function () { var f = $("#adminCodeEntry"); if (f) f.focus(); }, 60);
+}
+
 var actions = {
   "cam-toggle": function () { camStart(); },
   "close": function () { closeModal(); },
@@ -314,7 +332,7 @@ var actions = {
   "reg-retry": function (el) { closeModal(); startRegistration(el.dataset.code, el.dataset.token); },
   "bind-local": function (el) {
     var emp = findEmp(el.dataset.code);
-    if (emp) bindDevice(emp, pinFor(emp), false);
+    if (emp) bindDevice(emp, false);
   },
   "bind-yes": function () {
     if (!pendingReg) return;
@@ -322,11 +340,7 @@ var actions = {
     closeModal();
     startRegistration(p.code, p.token);
   },
-  "copy-pin": function (el) {
-    var pin = el.dataset.pin || "";
-    navigator.clipboard.writeText(pin).then(function () { toast("PIN скопирован"); }, function () { toast(pin); });
-  },
-  "unbind": function () { S.me = null; saveMe(); renderScanner(); toast("Привязка удалена с этого телефона"); },
+  "unbind": function () { S.me = null; saveMe(); renderScanner(); toast("Авторизация удалена с этого телефона"); },
   "show-qr": function (el) {
     var e = findEmp(el.dataset.code);
     if (!e) return;
@@ -345,18 +359,22 @@ var actions = {
   "regen-one": function (el) {
     var e = findEmp(el.dataset.code);
     if (!e) return;
-    if (!confirm("Перевыпустить код для " + e.name + "? Старый QR и PIN перестанут работать.")) return;
-    e.token = rand8(); e.boundAt = null; e.verified = false; e.device = "";
-    if (S.me && S.me.empCode === e.empCode) { S.me = null; saveMe(); }
-    saveEmp(); renderCodes(); renderEmployees(); renderScanner();
-    toast("Код перевыпущен");
+    requireAdmin(function () {
+      if (!confirm("Перевыпустить код для " + e.name + "? Старый QR перестанет работать, телефон потребуется авторизовать заново.")) return;
+      e.token = rand8(); e.boundAt = null; e.verified = false; e.device = "";
+      if (S.me && S.me.empCode === e.empCode) { S.me = null; saveMe(); }
+      saveEmp(); renderCodes(); renderEmployees(); renderScanner();
+      toast("Код перевыпущен");
+    }, "Перевыпуск регистрационного кода");
   },
   "regen-all": function () {
-    if (!confirm("Перевыпустить коды всех сотрудников? Все должны будут зарегистрироваться заново.")) return;
-    S.emp.forEach(function (e) { e.token = rand8(); e.boundAt = null; e.verified = false; e.device = ""; });
-    S.me = null; saveMe(); saveEmp();
-    renderCodes(); renderEmployees(); renderScanner();
-    toast("Все коды перевыпущены");
+    requireAdmin(function () {
+      if (!confirm("Перевыпустить коды всех сотрудников? Все телефоны потребуется авторизовать заново.")) return;
+      S.emp.forEach(function (e) { e.token = rand8(); e.boundAt = null; e.verified = false; e.device = ""; });
+      S.me = null; saveMe(); saveEmp();
+      renderCodes(); renderEmployees(); renderScanner();
+      toast("Все коды перевыпущены");
+    }, "Перевыпуск всех кодов");
   },
   "add-emp": function () {
     var n = S.emp.length + 1;
@@ -364,33 +382,14 @@ var actions = {
     saveEmp(); renderEmployees(); renderCodes();
     toast("Сотрудник добавлен");
   },
-  "pins-toggle": function () {
-    if (pinsVisible) { pinsVisible = false; renderEmployees(); $("#pinsBtn").textContent = "Показать PIN"; return; }
-    openModal(sheetHead("Код администратора", "Нужен для просмотра PIN сотрудников") +
-      '<input class="input mono" type="password" inputmode="numeric" id="adminPinEntry" style="margin-top:12px" placeholder="••••">' +
-      '<div class="col" style="margin-top:12px"><button class="btn primary" data-action="pin-check">Открыть</button>' +
-      '<button class="btn ghost" data-action="close">Отмена</button></div>');
-    setTimeout(function () { var f = $("#adminPinEntry"); if (f) f.focus(); }, 60);
-  },
-  "pin-check": function () {
-    var f = $("#adminPinEntry");
-    var v = f ? f.value : "";
-    if (v === S.set.adminPin) {
-      pinsVisible = true; closeModal(); renderEmployees();
-      $("#pinsBtn").textContent = "Скрыть PIN";
-      toast("PIN открыты на этом экране");
-    } else toast("Код администратора неверный");
-  },
-  "export-pins": function () {
-    var head = "Сотрудник;Код;PIN;Статус;Устройство;Дата регистрации";
-    var lines = S.emp.map(function (e) {
-      var srv = serverRow(e.empCode);
-      return [e.name, e.empCode, pinFor(e), srv ? srv.status : (e.boundAt ? "привязан" : "не зарегистрирован"),
-        (srv && srv.deviceLabel) || e.device || "",
-        (srv && srv.boundAt) || (e.boundAt ? dmy(e.boundAt) + " " + hhmm(e.boundAt) : "")]
-        .map(function (x) { return '"' + String(x === null || x === undefined ? "" : x).replace(/"/g, '""') + '"'; }).join(";");
-    });
-    downloadText("\uFEFF" + head + "\r\n" + lines.join("\r\n"), "pin-employees.csv", "text/csv;charset=utf-8");
+  "admin-unlock": function () {
+    var f = $("#adminCodeEntry");
+    var v = f ? f.value.trim() : "";
+    if (v !== S.set.adminPin) return toast("Код администратора неверный");
+    var fn = adminPending;
+    adminPending = null;
+    closeModal();
+    if (fn) fn();
   },
   "load-server": async function () {
     if (!S.set.sheetUrl) return toast("Сначала укажите URL веб-приложения");
@@ -406,37 +405,41 @@ var actions = {
   },
   "revoke": async function (el) {
     var code = el.dataset.code, e = findEmp(code);
-    if (!confirm("Отозвать доступ для " + (e ? e.name : code) + "? Отметки с телефона перестанут приниматься.")) return;
-    if (!S.set.sheetUrl) {
-      if (e) { e.boundAt = null; e.verified = false; }
-      if (S.me && S.me.empCode === code) { S.me = null; saveMe(); }
-      saveEmp(); renderEmployees(); renderCodes();
-      toast("Локальная привязка снята"); return;
-    }
-    try {
-      var r = await jsonp(S.set.sheetUrl, { action: "revoke", empCode: code, unblock: "false", token: S.set.adminPin });
-      if (r && r.ok) {
-        S.srv.rows.forEach(function (row) { if (row.empCode === code) row.status = "заблокирован"; });
-        saveSrv(); renderEmployees(); renderCodes();
-        toast("Доступ отозван");
-      } else toast("Не удалось отозвать: " + ((r && r.error) || "ошибка"));
-    } catch (err) { toast(err.message); }
+    requireAdmin(async function () {
+      if (!confirm("Отозвать доступ для " + (e ? e.name : code) + "? Отметки с этого телефона перестанут приниматься.")) return;
+      if (!S.set.sheetUrl) {
+        if (e) { e.boundAt = null; e.verified = false; }
+        if (S.me && S.me.empCode === code) { S.me = null; saveMe(); }
+        saveEmp(); renderEmployees(); renderCodes();
+        toast("Авторизация снята"); return;
+      }
+      try {
+        var r = await jsonp(S.set.sheetUrl, { action: "revoke", empCode: code, unblock: "false", token: S.set.adminPin });
+        if (r && r.ok) {
+          S.srv.rows.forEach(function (row) { if (row.empCode === code) row.status = "заблокирован"; });
+          saveSrv(); renderEmployees(); renderCodes();
+          toast("Доступ отозван");
+        } else toast("Не удалось отозвать: " + ((r && r.error) || "ошибка"));
+      } catch (err) { toast(err.message); }
+    }, "Отзыв доступа для " + (e ? e.name : code));
   },
   "unblock": async function (el) {
     var code = el.dataset.code, e = findEmp(code);
-    if (!confirm("Разрешить повторную регистрацию для " + (e ? e.name : code) + "? Старое устройство отвяжется.")) return;
-    if (e) { e.boundAt = null; e.verified = false; e.device = ""; }
-    if (S.me && S.me.empCode === code) { S.me = null; saveMe(); }
-    saveEmp();
-    if (!S.set.sheetUrl) { renderEmployees(); renderCodes(); renderScanner(); toast("Можно регистрироваться заново"); return; }
-    try {
-      var r = await jsonp(S.set.sheetUrl, { action: "revoke", empCode: code, unblock: "true", token: S.set.adminPin });
-      if (r && r.ok) {
-        S.srv.rows.forEach(function (row) { if (row.empCode === code) { row.status = "активен"; row.deviceId = ""; row.deviceLabel = ""; } });
-        saveSrv(); renderEmployees(); renderCodes(); renderScanner();
-        toast("Повторная регистрация разрешена");
-      } else toast("Ошибка: " + ((r && r.error) || "неизвестно"));
-    } catch (err) { toast(err.message); }
+    requireAdmin(async function () {
+      if (!confirm("Разрешить вход для " + (e ? e.name : code) + "? Старый телефон отвяжется, нужен будет новый QR.")) return;
+      if (e) { e.boundAt = null; e.verified = false; e.device = ""; }
+      if (S.me && S.me.empCode === code) { S.me = null; saveMe(); }
+      saveEmp();
+      if (!S.set.sheetUrl) { renderEmployees(); renderCodes(); renderScanner(); toast("Можно авторизоваться заново"); return; }
+      try {
+        var r = await jsonp(S.set.sheetUrl, { action: "revoke", empCode: code, unblock: "true", token: S.set.adminPin });
+        if (r && r.ok) {
+          S.srv.rows.forEach(function (row) { if (row.empCode === code) { row.status = "активен"; row.deviceId = ""; row.deviceLabel = ""; } });
+          saveSrv(); renderEmployees(); renderCodes(); renderScanner();
+          toast("Повторная авторизация разрешена");
+        } else toast("Ошибка: " + ((r && r.error) || "неизвестно"));
+      } catch (err) { toast(err.message); }
+    }, "Разрешение повторного входа");
   },
   "ping": async function () {
     if (!S.set.sheetUrl) return toast("Вставьте URL веб-приложения");
@@ -521,19 +524,19 @@ async function startPunchOffline(type) {
   proceedPunch(emp, type, false);
 }
 
+/* Резервная отметка без камеры: по коду сотрудника. По умолчанию выключена. */
 function manualPunch() {
-  if (!S.set.allowManualPin) return toast("Ручной ввод PIN отключён");
-  var pin = ($("#manualPin").value || "").trim();
+  if (!S.set.allowManualPin) return toast("Резервная отметка отключена в настройках");
+  var code = ($("#manualCode").value || "").trim();
   var type = $("#manualType").value === "out" ? "out" : "in";
-  if (!/^\d{6}$/.test(pin)) return toast("Введите 6 цифр PIN");
-  var emp = findEmpByPin(pin);
-  if (!emp) return toast("Сотрудник с таким PIN не найден");
-  if (!S.me || S.me.pin !== pin) {
-    S.me = { empCode: emp.empCode, empName: emp.name, pin: pin, deviceId: S.dev, deviceLabel: deviceLabel(), boundAt: new Date().toISOString(), token: emp.token, verified: false };
-    saveMe(); renderScanner();
-  }
+  if (!code) return toast("Введите код сотрудника, например EMP-001");
+  var emp = findEmpByCode(code);
+  if (!emp) return toast("Сотрудник с кодом " + code + " не найден");
+  if (emp.active === false) return toast("Сотрудник неактивен");
+  S.me = { empCode: emp.empCode, empName: emp.name, deviceId: S.dev, deviceLabel: deviceLabel(), boundAt: new Date().toISOString(), token: emp.token, verified: false };
+  saveMe(); renderScanner();
   window.__punchSource = "manual";
-  $("#manualPin").value = "";
+  $("#manualCode").value = "";
   startPunch(type);
 }
 
@@ -614,8 +617,8 @@ document.addEventListener("change", function (ev) {
 });
 
 document.addEventListener("keydown", function (ev) {
-  if (ev.key === "Enter" && ev.target && ev.target.id === "adminPinEntry") {
-    var btn = document.querySelector('[data-action="pin-check"]');
+  if (ev.key === "Enter" && ev.target && ev.target.id === "adminCodeEntry") {
+    var btn = document.querySelector('[data-action="admin-unlock"]');
     if (btn) btn.click();
   }
 });
