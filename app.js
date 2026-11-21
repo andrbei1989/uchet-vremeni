@@ -42,7 +42,15 @@ var ERRORS = {
   name_required: "Укажите ФИО",
   not_found: "Сотрудник не найден",
   unknown_action: "Сервер устарел: обновите код Apps Script до версии 4",
-  busy: "Сервер занят, попробуйте ещё раз"
+  busy: "Сервер занят, попробуйте ещё раз",
+  bad_time: "Неверная дата или время",
+  future_time: "Нельзя добавить отметку в будущем",
+  row_changed: "Таблицу изменили вручную — обновите табель и попробуйте снова",
+  needs_authorization: "Нужно разрешить доступ в Apps Script — см. инструкцию в «Автоматике»",
+  bad_tg_token: "Неверный токен бота",
+  tg_not_configured: "Сначала сохраните токен бота",
+  tg_no_messages: "Бот ещё не получил ни одного сообщения: откройте бота в Telegram и нажмите «Старт», затем повторите",
+  tg_not_linked: "Чат не подключён"
 };
 function errText(e) { return ERRORS[e] || String(e || "ошибка"); }
 
@@ -80,7 +88,7 @@ async function admin(params) {
     logout();
     throw new Error(errText(r.error));
   }
-  if (!r.ok) throw new Error(errText(r.error));
+  if (!r.ok) { var err = new Error(errText(r.error)); err.code = r.error; throw err; }
   return r;
 }
 
@@ -89,7 +97,7 @@ var S = {
   employees: [],
   board: null,
   boardAt: null,
-  settings: { lat: null, lng: null, radius: 100, workStart: "09:00", workEnd: "18:00", lunchMinutes: 60, lateTolerance: 10 },
+  settings: { lat: null, lng: null, radius: 100, workStart: "09:00", workEnd: "18:00", lunchMinutes: 60, lateTolerance: 10, workDays: "12345" },
   records: [],
   recordsKey: ""
 };
@@ -170,10 +178,11 @@ function renderBoard() {
   host.innerHTML = rows.map(function (r) {
     var on = r.onShift;
     var last = r.lastType
-      ? (r.lastType === "in" ? "вошёл " : "вышел ") + esc(r.lastText)
+      ? (r.autoClosed ? "не отметил выход · вход " + esc(r.lastText) : (r.lastType === "in" ? "вошёл " : "вышел ") + esc(r.lastText))
       : (r.bound ? "отметок ещё не было" : "телефон не привязан");
     var zone = "";
-    if (r.lastType && r.zone === "вне зоны") zone = ' <span class="badge red">вне зоны' + (r.distance ? " · " + r.distance + " м" : "") + "</span>";
+    if (r.autoClosed) zone = ' <span class="badge amber">закрыто автоматически</span>';
+    else if (r.lastType && r.zone === "вне зоны") zone = ' <span class="badge red">вне зоны' + (r.distance ? " · " + r.distance + " м" : "") + "</span>";
     else if (r.lastType && r.zone === "без координат") zone = ' <span class="badge amber">без геопозиции</span>';
     else if (r.lastType && r.zone === "в зоне") zone = ' <span class="badge green">в зоне</span>';
     return '<div class="card tight" style="border-left:4px solid ' + (on ? "#16a34a" : "#e2e8f0") + '">' +
@@ -235,6 +244,9 @@ function pairsFor(list) {
       if (r.type === "in") {
         if (open) out.push({ code: code, name: open.name, day: dayKey(open.ts), in: open, out: null, broken: "no-out" });
         open = r;
+      } else if (r.source === "авто") {
+        /* смену закрыл сервер ночью: выхода не было, часы не считаем */
+        if (open) { out.push({ code: code, name: open.name, day: dayKey(open.ts), in: open, out: r, broken: "auto" }); open = null; }
       } else if (open && dayKey(r.ts) === dayKey(open.ts)) {
         out.push({ code: code, name: open.name, day: dayKey(open.ts), in: open, out: r });
         open = null;
@@ -255,7 +267,7 @@ function pairsFor(list) {
   return out;
 }
 function hoursOf(p) {
-  if (!p.in || !p.out) return 0;
+  if (!p.in || !p.out || p.broken) return 0;
   var h = (new Date(p.out.ts) - new Date(p.in.ts)) / 3600000;
   var lunch = Number(S.settings.lunchMinutes) || 0;
   if (h > 6 && lunch > 0) h -= lunch / 60;
@@ -275,6 +287,10 @@ function zoneBadge(r) {
   if (r.zone === "вне зоны") return '<span class="badge red">' + (r.distance ? r.distance + " м" : "вне зоны") + "</span>";
   if (r.zone === "без координат") return '<span class="badge amber">без гео</span>';
   return "";
+}
+function manualMark(r) {
+  if (!r || r.source !== "администратор") return "";
+  return ' <span class="badge blue" title="' + esc(r.note || "Добавил администратор") + '">вручную</span>';
 }
 function mapLink(r) {
   if (!r || r.lat === null || r.lat === undefined) return "";
@@ -300,9 +316,9 @@ function renderReport() {
     var a = byEmp[p.code] = byEmp[p.code] || { code: p.code, name: (findEmp(p.code) || {}).name || p.name, hours: 0, days: {}, shifts: 0, late: 0, broken: 0, outZone: 0, pairs: [] };
     a.pairs.push(p);
     if (p.in) a.days[p.day] = 1;
-    if (p.in && p.out) { var h = hoursOf(p); a.hours += h; totalH += h; a.shifts++; shifts++; }
+    if (p.in && p.out && !p.broken) { var h = hoursOf(p); a.hours += h; totalH += h; a.shifts++; shifts++; }
     if (isLate(p)) { a.late++; late++; }
-    if (p.broken === "no-in" || p.broken === "no-out") { a.broken++; issues++; }
+    if (p.broken === "no-in" || p.broken === "no-out" || p.broken === "auto") { a.broken++; issues++; }
     if ((p.in && p.in.zone === "вне зоны") || (p.out && p.out.zone === "вне зоны")) a.outZone++;
   });
   $("#repKpi").innerHTML =
@@ -314,13 +330,16 @@ function renderReport() {
   if (!list.length) { $("#repList").innerHTML = '<div class="empty">За выбранный период отметок нет.</div>'; return; }
   $("#repList").innerHTML = list.map(function (a) {
     var rows = a.pairs.slice().sort(function (x, y) { return y.day.localeCompare(x.day); }).map(function (p) {
-      var outCell = p.out ? hhmm(p.out.ts) + " " + zoneBadge(p.out)
+      var outCell = p.broken === "auto" ? '<span style="color:#dc2626">нет выхода</span> <span class="badge amber">авто</span>'
+        : p.out ? hhmm(p.out.ts) + " " + zoneBadge(p.out) + manualMark(p.out)
         : (p.broken === "open" ? '<span class="badge green">на смене</span>' : '<span style="color:#dc2626">нет выхода</span>');
-      return "<tr><td>" + esc(dmy(p.in ? p.in.ts : p.out.ts).slice(0, 5)) + "</td>" +
-        "<td>" + (p.in ? hhmm(p.in.ts) + " " + zoneBadge(p.in) + mapLink(p.in) : '<span style="color:#dc2626">нет входа</span>') +
+      var dayTs = p.in ? p.in.ts : p.out.ts;
+      return "<tr><td>" + esc(dmy(dayTs).slice(0, 5)) + "</td>" +
+        "<td>" + (p.in ? hhmm(p.in.ts) + " " + zoneBadge(p.in) + manualMark(p.in) + mapLink(p.in) : '<span style="color:#dc2626">нет входа</span>') +
         (isLate(p) ? ' <span class="badge amber">опозд.</span>' : "") + "</td>" +
         "<td>" + outCell + "</td>" +
-        '<td class="num">' + (p.in && p.out ? fmtHours(hoursOf(p)) : "—") + "</td></tr>";
+        '<td class="num">' + (p.in && p.out && !p.broken ? fmtHours(hoursOf(p)) : "—") + "</td>" +
+        '<td><button class="btn sm ghost" data-action="edit-day" data-code="' + esc(a.code) + '" data-day="' + dayKey(dayTs) + '" title="Исправить">✎</button></td></tr>';
     }).join("");
     return '<details class="emp"><summary>' +
       '<div class="avatar" style="width:34px;height:34px;font-size:12px">' + esc(initials(a.name)) + "</div>" +
@@ -330,7 +349,7 @@ function renderReport() {
       (a.broken ? ' · <span style="color:#dc2626">без пары: ' + a.broken + "</span>" : "") +
       (a.outZone ? ' · <span style="color:#dc2626">вне зоны: ' + a.outZone + "</span>" : "") + "</div></div>" +
       '<div style="font-weight:700">' + fmtHours(a.hours) + " ч</div></summary>" +
-      '<div style="overflow-x:auto"><table class="tbl" style="margin-top:8px"><thead><tr><th>Дата</th><th>Вход</th><th>Выход</th><th class="num">Часы</th></tr></thead><tbody>' +
+      '<div style="overflow-x:auto"><table class="tbl" style="margin-top:8px"><thead><tr><th>Дата</th><th>Вход</th><th>Выход</th><th class="num">Часы</th><th></th></tr></thead><tbody>' +
       rows + "</tbody></table></div></details>";
   }).join("");
 }
@@ -398,6 +417,30 @@ function renderSettings() {
   $("#setLunch").value = s.lunchMinutes;
   $("#setLate").value = s.lateTolerance;
   $("#serverUrl").textContent = AUTH.server;
+  var days = String(s.workDays || "");
+  $("#setDays").innerHTML = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"].map(function (d, i) {
+    return '<label class="chk" style="padding:0 6px 0 0"><input type="checkbox" data-day="' + (i + 1) + '"' + (days.indexOf(String(i + 1)) >= 0 ? " checked" : "") + "> " + d + "</label>";
+  }).join("");
+  $("#tgOutZone").checked = s.tgOutZone !== "0";
+  $("#tgAbsent").checked = s.tgAbsent !== "0";
+  $("#tgDaily").checked = s.tgDaily !== "0";
+  var tg = $("#tgBadge");
+  if (s.tgLinked) { tg.className = "badge green"; tg.textContent = "подключено: " + s.tgChat; }
+  else if (s.tgToken) { tg.className = "badge amber"; tg.textContent = "токен есть, чат не подключён"; }
+  else { tg.className = "badge"; tg.textContent = "не подключено"; }
+  $("#tgHow").open = !s.tgLinked && !s.tgToken;
+  var ab = $("#autoBadge");
+  if (s.automation === true) { ab.className = "badge green"; ab.textContent = "включена"; }
+  else if (s.automation === false) { ab.className = "badge amber"; ab.textContent = "выключена"; }
+  else if (s.automation === null) { ab.className = "badge red"; ab.textContent = "нужен доступ"; }
+  else { ab.className = "badge"; ab.textContent = "…"; }
+  $("#autoHelp").classList.toggle("hidden", s.automation !== null);
+  $("#backupInfo").innerHTML = s.lastBackup
+    ? "Последняя копия: " + esc(s.lastBackup) + (s.lastBackupUrl ? ' · <a href="' + esc(s.lastBackupUrl) + '" target="_blank" rel="noopener">открыть</a>' : "")
+    : "Копий ещё не было.";
+}
+function workDaysValue() {
+  return Array.prototype.map.call(document.querySelectorAll("#setDays input:checked"), function (c) { return c.dataset.day; }).join("");
 }
 
 /* ================= навигация ================= */
@@ -554,9 +597,9 @@ var actions = {
       var e = findEmp(p.code);
       return [p.code, e ? e.name : p.name, dmy(p.in ? p.in.ts : p.out.ts),
         p.in ? hhmm(p.in.ts) : "", p.in ? p.in.zone : "",
-        p.out ? hhmm(p.out.ts) : "", p.out ? p.out.zone : "",
-        p.in && p.out ? fmtHours(hoursOf(p)) : "", isLate(p) ? "да" : "",
-        p.broken === "no-in" ? "нет входа" : p.broken === "no-out" ? "нет выхода" : p.broken === "open" ? "на смене" : ""]
+        p.out && p.broken !== "auto" ? hhmm(p.out.ts) : "", p.out && p.broken !== "auto" ? p.out.zone : "",
+        p.in && p.out && !p.broken ? fmtHours(hoursOf(p)) : "", isLate(p) ? "да" : "",
+        brokenText(p)]
         .map(function (x) { return '"' + String(x === null || x === undefined ? "" : x).replace(/"/g, '""') + '"'; }).join(";");
     });
     downloadText("﻿" + head.join(";") + "\r\n" + lines.join("\r\n"), "tabel-" + dayKey(rep.from) + "_" + dayKey(rep.to) + ".csv", "text/csv;charset=utf-8");
@@ -682,7 +725,9 @@ var actions = {
         action: "saveSettings", lat: lat, lng: lng,
         radius: $("#setRadius").value || 100,
         workStart: $("#setStart").value, workEnd: $("#setEnd").value,
-        lunchMinutes: $("#setLunch").value || 0, lateTolerance: $("#setLate").value || 0
+        lunchMinutes: $("#setLunch").value || 0, lateTolerance: $("#setLate").value || 0,
+        workDays: workDaysValue(),
+        tgOutZone: $("#tgOutZone").checked ? "1" : "0", tgAbsent: $("#tgAbsent").checked ? "1" : "0", tgDaily: $("#tgDaily").checked ? "1" : "0"
       });
       S.settings = r.settings; renderSettings();
       toast("Настройки сохранены");
@@ -727,6 +772,201 @@ document.addEventListener("keydown", function (ev) {
 });
 document.addEventListener("visibilitychange", function () {
   if (!document.hidden && AUTH && current === "board") refreshBoard(true);
+});
+
+function brokenText(p) {
+  return { "no-in": "нет входа", "no-out": "нет выхода", "auto": "нет выхода (закрыто автоматически)", "open": "на смене" }[p.broken] || "";
+}
+
+/* ================= табель Excel ================= */
+var MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+async function exportXlsx() {
+  if (!window.XLSX) throw new Error("Модуль Excel не загрузился — обновите страницу");
+  var base = rep.from || new Date();
+  var y = base.getFullYear(), m = base.getMonth();
+  var first = new Date(y, m, 1), last = new Date(y, m + 1, 0, 23, 59, 59, 999);
+  var nDays = last.getDate();
+  toast("Готовим табель за " + MONTHS[m].toLowerCase() + "…");
+  var recs = (await admin({ action: "read", from: first.toISOString(), to: last.toISOString() })).rows || [];
+  var pairs = pairsFor(recs);
+  var workDays = String(S.settings.workDays || "12345");
+  var isOff = function (d) { var wd = new Date(y, m, d).getDay(); return workDays.indexOf(String(wd === 0 ? 7 : wd)) < 0; };
+  var WD = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+
+  var codes = S.employees.map(function (e) { return e.code; });
+  pairs.forEach(function (p) { if (codes.indexOf(p.code) < 0) codes.push(p.code); });
+  var nameOf = function (code) { var e = findEmp(code); if (e) return e.name; var p = pairs.filter(function (x) { return x.code === code; })[0]; return p ? p.name : code; };
+
+  var head = ["№", "Сотрудник", "Код"];
+  var headStyled = head.map(function (h) { return { v: h, s: 1 }; });
+  for (var d = 1; d <= nDays; d++) headStyled.push({ v: d + "\n" + WD[new Date(y, m, d).getDay()], s: isOff(d) ? 3 : 1 });
+  ["Дней", "Часов", "Опозданий", "Без пары"].forEach(function (h) { headStyled.push({ v: h, s: 1 }); });
+
+  var rows = [
+    [{ v: "Табель учёта рабочего времени — " + MONTHS[m] + " " + y, s: 5 }],
+    [{ v: "Рабочее время " + S.settings.workStart + "–" + S.settings.workEnd + ", обед " + (S.settings.lunchMinutes || 0) +
+      " мин (вычитается из смен длиннее 6 ч), опоздание — позже " + S.settings.workStart + " + " + (S.settings.lateTolerance || 0) + " мин. Сформировано " +
+      dmy(new Date()) + " " + hhmm(new Date()), s: 7 }],
+    [],
+    headStyled
+  ];
+  var dayTotals = new Array(nDays + 1).fill(0), grand = 0;
+  codes.forEach(function (code, idx) {
+    var own = pairs.filter(function (p) { return p.code === code; });
+    var hours = {}, broken = {}, daysSet = {}, late = 0, bad = 0, total = 0;
+    own.forEach(function (p) {
+      var dd = new Date((p.in || p.out).ts).getDate();
+      if (p.in && p.out && !p.broken) { var h = hoursOf(p); hours[dd] = (hours[dd] || 0) + h; total += h; }
+      if (p.in) daysSet[dd] = 1;
+      if (p.broken === "no-in" || p.broken === "no-out" || p.broken === "auto") { broken[dd] = 1; bad++; }
+      if (isLate(p)) late++;
+    });
+    var row = [{ v: idx + 1, s: 0 }, { v: nameOf(code), s: 9 }, { v: code, s: 0 }];
+    for (var d2 = 1; d2 <= nDays; d2++) {
+      var hv = hours[d2] ? Math.round(hours[d2] * 10) / 10 : null;
+      if (hv) dayTotals[d2] += hv;
+      if (broken[d2] && !hv) row.push({ v: "?", s: 8 });
+      else row.push({ v: hv, s: isOff(d2) ? 4 : 2 });
+    }
+    grand += total;
+    row.push({ v: Object.keys(daysSet).length, s: 0 }, { v: Math.round(total * 10) / 10, s: 6 }, { v: late, s: 0 }, { v: bad, s: bad ? 8 : 0 });
+    rows.push(row);
+  });
+  var tot = [{ v: "", s: 9 }, { v: "Итого", s: 9 }, { v: "", s: 9 }];
+  for (var d3 = 1; d3 <= nDays; d3++) tot.push({ v: dayTotals[d3] ? Math.round(dayTotals[d3] * 10) / 10 : null, s: 6 });
+  tot.push({ v: "", s: 9 }, { v: Math.round(grand * 10) / 10, s: 6 });
+  rows.push(tot, [], [{ v: "Числа — отработанные часы. «?» — нет входа или выхода, нужна проверка. Закрашены выходные дни.", s: 7 }]);
+  var cols = [5, 28, 10];
+  for (var d4 = 1; d4 <= nDays; d4++) cols.push(5.5);
+  cols.push(7, 8, 11, 9);
+
+  var shiftRows = [["Дата", "Сотрудник", "Код", "Вход", "Зона входа", "Выход", "Зона выхода", "Часы", "Опоздание", "Замечание", "Примечание"]
+    .map(function (h) { return { v: h, s: 1 }; })];
+  pairs.slice().sort(function (a, b) { return a.day === b.day ? nameOf(a.code).localeCompare(nameOf(b.code), "ru") : a.day < b.day ? -1 : 1; })
+    .forEach(function (p) {
+      var notes = [p.in && p.in.note, p.out && p.out.note].filter(Boolean).join("; ");
+      shiftRows.push([dmy((p.in || p.out).ts), nameOf(p.code), p.code,
+        p.in ? hhmm(p.in.ts) : "", p.in ? p.in.zone : "",
+        p.out && p.broken !== "auto" ? hhmm(p.out.ts) : "", p.out && p.broken !== "auto" ? p.out.zone : "",
+        { v: p.in && p.out && !p.broken ? Math.round(hoursOf(p) * 100) / 100 : null, s: 2 },
+        isLate(p) ? "да" : "", { v: brokenText(p), s: p.broken && p.broken !== "open" ? 8 : 0 }, notes]);
+    });
+
+  var blob = XLSX.build([
+    { name: "Табель", rows: rows, cols: cols, freeze: { row: 4, col: 2 } },
+    { name: "Смены", rows: shiftRows, cols: [11, 28, 10, 8, 14, 8, 14, 7, 11, 30, 50], freeze: { row: 1, col: 0 } }
+  ]);
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = "tabel-" + y + "-" + pad(m + 1) + ".xlsx";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 3000);
+  toast("Табель за " + MONTHS[m].toLowerCase() + " скачан");
+  return blob;
+}
+
+/* ================= правка отметок ================= */
+function nowLocalDate() { return dayKey(new Date()); }
+function punchForm(code, day) {
+  var opts = S.employees.map(function (e) {
+    return '<option value="' + esc(e.code) + '"' + (e.code === code ? " selected" : "") + ">" + esc(e.name) + "</option>";
+  }).join("");
+  return '<div class="card tight" style="margin-top:12px;box-shadow:none"><h3>Добавить отметку</h3>' +
+    (code ? '<input type="hidden" id="pfEmp" value="' + esc(code) + '">' :
+      '<label class="field" style="margin-top:8px">Сотрудник<select class="input" id="pfEmp">' + opts + "</select></label>") +
+    '<div class="grid3" style="margin-top:8px">' +
+      '<label class="field">Тип<select class="input" id="pfType"><option value="in">Вход</option><option value="out">Выход</option></select></label>' +
+      '<label class="field">Дата<input class="input" type="date" id="pfDate" value="' + esc(day || nowLocalDate()) + '" max="' + nowLocalDate() + '"></label>' +
+      '<label class="field">Время<input class="input" type="time" id="pfTime" value="' + esc(S.settings.workEnd || "18:00") + '"></label>' +
+    "</div>" +
+    '<label class="field" style="margin-top:8px">Причина<input class="input" id="pfNote" maxlength="200" placeholder="Например: забыл отметить выход"></label>' +
+    '<button class="btn primary block" style="margin-top:10px" data-action="punch-save">Добавить</button></div>';
+}
+function dayPunches(code, day) {
+  return S.records.filter(function (r) { return r.code === code && dayKey(r.ts) === day; })
+    .sort(function (a, b) { return a.ts < b.ts ? -1 : 1; });
+}
+function openDayEditor(code, day) {
+  var e = findEmp(code) || { name: code };
+  var list = dayPunches(code, day);
+  var rows = list.length ? list.map(function (r) {
+    var src = r.source === "авто" ? '<span class="badge amber">закрыто автоматически</span>'
+      : r.source === "администратор" ? '<span class="badge blue">вручную</span>' : zoneBadge(r);
+    return '<div class="row between" style="padding:8px 0;border-bottom:1px solid #f1f5f9">' +
+      '<div><b>' + (r.type === "in" ? "Вход" : "Выход") + " " + hhmm(r.ts) + "</b> " + src +
+      (r.note ? '<div class="muted small">' + esc(r.note) + "</div>" : "") + "</div>" +
+      '<button class="btn sm danger" data-action="punch-void" data-row="' + r.row + '" data-ts="' + esc(r.ts) + '" data-code="' + esc(r.code) + '">Аннулировать</button></div>';
+  }).join("") : '<div class="muted small" style="padding:8px 0">Отметок за этот день нет.</div>';
+  openModal(sheetHead(e.name, "Отметки за " + dmy(parseDay(day))) +
+    '<div style="margin-top:8px">' + rows + "</div>" +
+    '<div class="muted small" style="margin-top:8px">Аннулированная отметка остаётся в таблице с пометкой, но не учитывается в табеле.</div>' +
+    punchForm(code, day));
+}
+Object.assign(actions, {
+  "tg-save": async function () {
+    var tok = $("#tgToken").value.trim();
+    if (!tok) return toast("Вставьте токен от @BotFather");
+    try {
+      var r = await admin({ action: "saveSettings", tgToken: tok });
+      S.settings = r.settings; $("#tgToken").value = ""; renderSettings();
+      toast("Токен сохранён. Напишите боту «Старт» и нажмите «Подключить чат».");
+    } catch (e) { toast(e.message); }
+  },
+  "tg-link": async function () {
+    toast("Ищем ваш чат…");
+    try {
+      var r = await admin({ action: "tgLink" });
+      await loadSettings(); renderSettings();
+      toast("Подключено: " + r.chat + ". Бот прислал подтверждение.");
+    } catch (e) { toast(e.message); if (e.code === "needs_authorization") { S.settings.automation = null; renderSettings(); } }
+  },
+  "tg-test": async function () {
+    try { await admin({ action: "tgTest" }); toast("Сообщение отправлено — проверьте Telegram"); }
+    catch (e) { toast(/not_linked/.test(e.message) ? "Сначала подключите чат" : e.message); }
+  },
+  "auto-install": async function () {
+    toast("Включаем…");
+    try { var r = await admin({ action: "installAutomation" }); S.settings = r.settings; renderSettings(); toast("Автоматика включена"); }
+    catch (e) { S.settings.automation = null; renderSettings(); toast(e.message); }
+  },
+  "backup-now": async function () {
+    toast("Делаем копию таблицы…");
+    try { var r = await admin({ action: "backupNow" }); await loadSettings(); renderSettings(); toast("Копия сохранена: " + r.name); }
+    catch (e) { if (e.code === "needs_authorization") { S.settings.automation = null; renderSettings(); } toast(e.message); }
+  },
+  "xlsx": async function () { try { await exportXlsx(); } catch (e) { toast(e.message); } },
+  "edit-day": function (el) { openDayEditor(el.dataset.code, el.dataset.day); },
+  "punch-add": function () {
+    if (!S.employees.length) return toast("Сначала добавьте сотрудников");
+    openModal(sheetHead("Добавить отметку", "Если сотрудник забыл отметиться или сел телефон") + punchForm("", ""));
+  },
+  "punch-save": async function () {
+    var code = $("#pfEmp").value, date = $("#pfDate").value, time = $("#pfTime").value;
+    if (!code || !date || !time) return toast("Заполните сотрудника, дату и время");
+    var p = date.split("-"), t = time.split(":");
+    var ts = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), Number(t[0]), Number(t[1]));
+    if (ts.getTime() > Date.now() + 5 * 60000) return toast(errText("future_time"));
+    try {
+      await admin({ action: "addPunch", code: code, type: $("#pfType").value, ts: ts.toISOString(), note: $("#pfNote").value.trim() });
+      toast("Отметка добавлена");
+      await loadRecords(true);
+      if (current === "report") renderReport();
+      openDayEditor(code, dayKey(ts));
+    } catch (e) { toast(e.message); }
+  },
+  "punch-void": function (el) {
+    var code = el.dataset.code, row = el.dataset.row, ts = el.dataset.ts;
+    ask("Аннулировать отметку?", "Отметка " + esc(hhmm(ts)) + " перестанет учитываться в табеле. В таблице она останется с пометкой «аннулировано».",
+      "Аннулировать", async function () {
+        try {
+          await admin({ action: "voidPunch", code: code, row: row, ts: ts });
+          toast("Отметка аннулирована");
+          await loadRecords(true);
+          if (current === "report") renderReport();
+          openDayEditor(code, dayKey(ts));
+        } catch (e) { toast(e.message); if (e.code === "row_changed") { await loadRecords(true); renderReport(); } }
+      }, true);
+  }
 });
 
 /* ================= старт ================= */

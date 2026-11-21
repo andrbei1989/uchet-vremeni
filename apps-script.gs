@@ -1,6 +1,6 @@
 /**
  * Учёт рабочего времени — сервер на Google Apps Script.
- * Версия 4.
+ * Версия 5.
  *
  * Установка (один раз):
  * 1. Создайте Google Таблицу.
@@ -14,9 +14,13 @@
  * Так ссылка /exec останется прежней и QR-коды перепечатывать не придётся.
  *
  * Листы «Сотрудники», «Отметки» и «Настройки» создаются автоматически.
+ *
+ * Автоматика (резервные копии, автозакрытие смен, Telegram): один раз выберите вверху
+ * функцию installAutomation → «Выполнить» → разрешите доступ. Или нажмите кнопку в админке
+ * (Настройки → Автоматика), когда доступ уже разрешён.
  */
 
-var VERSION = 4;
+var VERSION = 5;
 
 var SHEET_EMP = 'Сотрудники';
 var SHEET_ATT = 'Отметки';
@@ -24,7 +28,13 @@ var SHEET_SET = 'Настройки';
 
 var HEAD_EMP = ['Код', 'ФИО', 'Ключ QR', 'Статус', 'Телефон', 'Привязан', 'Секрет телефона', 'Обновлено'];
 var HEAD_ATT = ['Дата', 'Время', 'Код', 'ФИО', 'Тип', 'Широта', 'Долгота',
-  'Точность (м)', 'Расстояние (м)', 'В зоне', 'Источник', 'Устройство', 'Метка ISO'];
+  'Точность (м)', 'Расстояние (м)', 'В зоне', 'Источник', 'Устройство', 'Метка ISO', 'Примечание'];
+/* колонки листа «Отметки» (с нуля) */
+var A_DATE = 0, A_TIME = 1, A_CODE = 2, A_NAME = 3, A_TYPE = 4, A_LAT = 5, A_LNG = 6, A_ACC = 7,
+  A_DIST = 8, A_ZONE = 9, A_SRC = 10, A_DEV = 11, A_ISO = 12, A_NOTE = 13;
+var SRC_QR = 'QR', SRC_ADMIN = 'администратор', SRC_AUTO = 'авто', SRC_VOID = 'аннулировано';
+var BACKUP_FOLDER = 'Учёт рабочего времени — резервные копии';
+var BACKUP_KEEP = 8;
 
 /* колонки листа «Сотрудники» (с нуля) */
 var E_CODE = 0, E_NAME = 1, E_KEY = 2, E_STATUS = 3, E_DEVICE = 4, E_BOUND = 5, E_SECRET = 6, E_UPD = 7;
@@ -37,7 +47,8 @@ var DUP_WINDOW_MS = 2 * 60 * 1000;   /* повторный скан того ж�
 var PUBLIC_ACTIONS = { ping: 1, setup: 1, register: 1, punch: 1 };
 var ADMIN_ACTIONS = {
   login: 1, changePassword: 1, employees: 1, addEmployee: 1, updateEmployee: 1,
-  regenKey: 1, board: 1, read: 1, getSettings: 1, saveSettings: 1
+  regenKey: 1, board: 1, read: 1, getSettings: 1, saveSettings: 1,
+  addPunch: 1, voidPunch: 1, backupNow: 1, tgLink: 1, tgTest: 1, installAutomation: 1
 };
 
 function doGet(e) {
@@ -77,7 +88,13 @@ function ttRoute(a, p) {
     if (a === 'regenKey') return ttRegenKey(p);
     if (a === 'board') return ttBoard();
     if (a === 'read') return ttRead(p);
-    if (a === 'getSettings') return { ok: true, settings: ttSettings() };
+    if (a === 'getSettings') return { ok: true, settings: ttSettingsFull() };
+    if (a === 'addPunch') return ttAddPunch(p);
+    if (a === 'voidPunch') return ttVoidPunch(p);
+    if (a === 'backupNow') return ttBackupReply();
+    if (a === 'tgLink') return ttTgLink();
+    if (a === 'tgTest') return ttTgTest();
+    if (a === 'installAutomation') return ttInstallReply();
     if (a === 'saveSettings') return ttSaveSettings(p);
   }
   return { ok: false, error: 'unknown_action' };
@@ -133,7 +150,13 @@ function ttSheet(name, headers, textCols) {
   if (sh && sh.getLastColumn() > 0) {
     /* лист от старой версии приложения с другими столбцами — не трогаем его данные, а откладываем в сторону */
     var head = sh.getRange(1, 1, 1, headers.length).getValues()[0].map(ttStr);
-    if (head.join('|') !== headers.join('|')) {
+    var filled = head.filter(function (h) { return h; }).length;
+    var isPrefix = filled > 0 && head.slice(0, filled).join('|') === headers.slice(0, filled).join('|') &&
+      head.slice(filled).every(function (h) { return !h; });
+    if (isPrefix && filled < headers.length) {
+      /* та же таблица из предыдущей версии — просто дописываем новые столбцы */
+      sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    } else if (head.join('|') !== headers.join('|')) {
       var old = name + ' (старая версия)', n = 2;
       while (ss.getSheetByName(old)) old = name + ' (старая версия ' + (n++) + ')';
       sh.setName(old);
@@ -182,16 +205,19 @@ function ttNum(v) {
 /* ================= настройки ================= */
 var SETTING_KEYS = {
   office_lat: 'lat', office_lng: 'lng', radius_m: 'radius',
-  work_start: 'workStart', work_end: 'workEnd', lunch_min: 'lunchMinutes', late_min: 'lateTolerance'
+  work_start: 'workStart', work_end: 'workEnd', lunch_min: 'lunchMinutes', late_min: 'lateTolerance',
+  work_days: 'workDays', tg_out_zone: 'tgOutZone', tg_absent: 'tgAbsent', tg_daily: 'tgDaily'
 };
+var TEXT_SETTINGS = { workStart: 1, workEnd: 1, workDays: 1, tgOutZone: 1, tgAbsent: 1, tgDaily: 1 };
 function ttSettings() {
-  var out = { lat: null, lng: null, radius: 100, workStart: '09:00', workEnd: '18:00', lunchMinutes: 60, lateTolerance: 10 };
+  var out = { lat: null, lng: null, radius: 100, workStart: '09:00', workEnd: '18:00', lunchMinutes: 60, lateTolerance: 10,
+    workDays: '12345', tgOutZone: '1', tgAbsent: '1', tgDaily: '1' };
   ttRows(ttSet()).forEach(function (r) {
     var k = SETTING_KEYS[ttStr(r[0])];
     if (!k) return;
     var v = ttStr(r[1]);
     if (v === '') return;
-    if (k === 'workStart' || k === 'workEnd') out[k] = v;
+    if (TEXT_SETTINGS[k]) out[k] = v;
     else { var n = ttNum(v); if (n !== null) out[k] = n; }
   });
   return out;
@@ -211,10 +237,21 @@ function ttSaveSettings(p) {
     var v = ttStr(p[field]);
     if (field === 'workStart' || field === 'workEnd') {
       if (v && !/^\d{1,2}:\d{2}$/.test(v)) return;
+    } else if (field === 'workDays') {
+      if (!/^[1-7]{0,7}$/.test(v)) return;
+    } else if (TEXT_SETTINGS[field]) {
+      v = v === '1' || v === 'true' ? '1' : '0';
     } else if (v !== '' && ttNum(v) === null) return;
     ttWriteSetting(key, v);
   });
-  return { ok: true, settings: ttSettings() };
+  if (p.tgToken !== undefined) {
+    var tok = ttStr(p.tgToken);
+    if (tok && !/^\d{5,}:[\w-]{30,}$/.test(tok)) return { ok: false, error: 'bad_tg_token' };
+    var props = ttProps();
+    if (tok) props.setProperty('tg_token', tok); else props.deleteProperty('tg_token');
+    props.deleteProperty('tg_chat');
+  }
+  return { ok: true, settings: ttSettingsFull() };
 }
 
 /* ================= сотрудники ================= */
@@ -348,7 +385,12 @@ function ttPunch(p) {
 
   att.appendRow([ttFmt(now, 'dd.MM.yyyy'), ttFmt(now, 'HH:mm:ss'), code, name, typeRu,
     lat === null ? '' : lat, lng === null ? '' : lng, acc === null ? '' : Math.round(acc),
-    distance, zone, 'QR', ttStr(r[E_DEVICE]), now.toISOString()]);
+    distance, zone, SRC_QR, ttStr(r[E_DEVICE]), now.toISOString(), '']);
+
+  if ((zone === 'вне зоны' || zone === 'без координат') && sett.tgOutZone !== '0') {
+    ttTgSafe((type === 'in' ? '🟢 Вход' : '🔵 Выход') + ' <b>' + ttHtml(name) + '</b> в ' + ttFmt(now, 'HH:mm') + ' — ' +
+      (zone === 'вне зоны' ? '⚠️ вне рабочего места, ' + distance + ' м' : '⚠️ без геопозиции'));
+  }
 
   return ttPunchReply(type, name, code, now, zone, distance, false, last);
 }
@@ -367,8 +409,9 @@ function ttPunchReply(type, name, code, ts, zone, distance, duplicate, prev) {
   return out;
 }
 
+function ttVoid(row) { return ttStr(row[A_SRC]) === SRC_VOID; }
 function ttParseTs(row) {
-  var iso = row[12];
+  var iso = row[A_ISO];
   if (iso instanceof Date) return iso;
   if (iso) { var d = new Date(String(iso)); if (!isNaN(d.getTime())) return d; }
   return null;
@@ -377,10 +420,10 @@ function ttParseTs(row) {
 function ttLastPunch(att, code) {
   var data = ttRows(att);
   for (var i = data.length - 1; i >= 0; i--) {
-    if (ttStr(data[i][2]) !== code) continue;
+    if (ttStr(data[i][2]) !== code || ttVoid(data[i])) continue;
     var ts = ttParseTs(data[i]);
     if (!ts) continue;
-    return { ts: ts, type: ttStr(data[i][4]), zone: ttStr(data[i][9]), distance: ttNum(data[i][8]) };
+    return { ts: ts, type: ttStr(data[i][4]), zone: ttStr(data[i][9]), distance: ttNum(data[i][8]), source: ttStr(data[i][A_SRC]) };
   }
   return null;
 }
@@ -392,9 +435,9 @@ function ttBoard() {
   ttRows(ttAtt()).forEach(function (row) {
     var code = ttStr(row[2]);
     var ts = ttParseTs(row);
-    if (!code || !ts) return;
+    if (!code || !ts || ttVoid(row)) return;
     if (!last[code] || ts.getTime() >= last[code].ts.getTime()) {
-      last[code] = { ts: ts, type: ttStr(row[4]), zone: ttStr(row[9]), distance: ttNum(row[8]) };
+      last[code] = { ts: ts, type: ttStr(row[4]), zone: ttStr(row[9]), distance: ttNum(row[8]), source: ttStr(row[A_SRC]) };
     }
   });
   var rows = ttEmployeeList().map(function (e) {
@@ -406,7 +449,8 @@ function ttBoard() {
       lastIso: l ? l.ts.toISOString() : '',
       lastText: l ? ttFmt(l.ts, 'dd.MM.yyyy HH:mm') : '',
       zone: l ? l.zone : '',
-      distance: l ? l.distance : null
+      distance: l ? l.distance : null,
+      autoClosed: !!(l && l.source === SRC_AUTO)
     };
   });
   rows.sort(function (a, b) {
@@ -421,9 +465,9 @@ function ttRead(p) {
   var from = p.from ? new Date(String(p.from)) : null;
   var to = p.to ? new Date(String(p.to)) : null;
   var out = [];
-  ttRows(ttAtt()).forEach(function (row) {
+  ttRows(ttAtt()).forEach(function (row, i) {
     var ts = ttParseTs(row);
-    if (!ts) return;
+    if (!ts || ttVoid(row)) return;
     if (from && !isNaN(from) && ts < from) return;
     if (to && !isNaN(to) && ts > to) return;
     out.push({
@@ -431,9 +475,270 @@ function ttRead(p) {
       type: ttStr(row[4]) === 'выход' ? 'out' : 'in',
       ts: ts.toISOString(),
       lat: ttNum(row[5]), lng: ttNum(row[6]), accuracy: ttNum(row[7]), distance: ttNum(row[8]),
-      zone: ttStr(row[9]), device: ttStr(row[11])
+      zone: ttStr(row[9]), device: ttStr(row[11]),
+      row: i + 2, source: ttStr(row[A_SRC]), note: ttStr(row[A_NOTE])
     });
   });
   out.sort(function (a, b) { return a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0; });
   return { ok: true, rows: out };
+}
+
+/* ================= правки администратора ================= */
+/** Отметка, добавленная администратором (забыл отметиться, сел телефон и т.п.). */
+function ttAddPunch(p) {
+  var f = ttFindEmp(p.code);
+  if (!f) return { ok: false, error: 'not_found' };
+  var type = p.type === 'out' ? 'out' : (p.type === 'in' ? 'in' : '');
+  if (!type) return { ok: false, error: 'bad_type' };
+  var ts = new Date(ttStr(p.ts));
+  if (isNaN(ts.getTime())) return { ok: false, error: 'bad_time' };
+  if (ts.getTime() > Date.now() + 5 * 60 * 1000) return { ok: false, error: 'future_time' };
+  var note = ttStr(p.note).slice(0, 200);
+  ttAtt().appendRow([ttFmt(ts, 'dd.MM.yyyy'), ttFmt(ts, 'HH:mm:ss'), ttStr(f.r[E_CODE]), ttStr(f.r[E_NAME]),
+    type === 'out' ? 'выход' : 'вход', '', '', '', '', 'вручную', SRC_ADMIN, '', ts.toISOString(),
+    'Добавил администратор' + (note ? ': ' + note : '')]);
+  return { ok: true };
+}
+
+/** Аннулировать отметку: строка остаётся в таблице, но не учитывается. */
+function ttVoidPunch(p) {
+  var sh = ttAtt();
+  var row = Number(p.row);
+  if (!row || row < 2 || row > sh.getLastRow()) return { ok: false, error: 'not_found' };
+  var r = sh.getRange(row, 1, 1, HEAD_ATT.length).getValues()[0];
+  var ts = ttParseTs(r);
+  /* защита: строка могла сместиться, если таблицу правили руками */
+  if (!ts || ts.toISOString() !== ttStr(p.ts) || ttStr(r[A_CODE]) !== ttStr(p.code)) return { ok: false, error: 'row_changed' };
+  if (ttVoid(r)) return { ok: true };
+  var note = ttStr(p.note).slice(0, 200);
+  sh.getRange(row, A_SRC + 1).setValue(SRC_VOID);
+  sh.getRange(row, A_NOTE + 1).setValue('Аннулировано администратором ' + ttFmt(new Date(), 'dd.MM.yyyy HH:mm') +
+    (note ? ': ' + note : '') + (ttStr(r[A_NOTE]) ? ' | ' + ttStr(r[A_NOTE]) : ''));
+  return { ok: true };
+}
+
+/* ================= настройки для админки ================= */
+function ttSettingsFull() {
+  var s = ttSettings();
+  var props = ttProps();
+  s.tgToken = !!props.getProperty('tg_token');
+  s.tgChat = props.getProperty('tg_chat_name') || '';
+  s.tgLinked = !!props.getProperty('tg_chat');
+  s.lastBackup = ttWhen(props.getProperty('last_backup'));
+  s.lastBackupUrl = props.getProperty('last_backup_url') || '';
+  s.lastTick = ttWhen(props.getProperty('last_tick'));
+  try {
+    s.automation = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'ttTick'; });
+  } catch (err) {
+    s.automation = null; /* доступ к расписанию ещё не разрешён */
+  }
+  return s;
+}
+
+/* ================= резервные копии ================= */
+function ttBackup() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var it = DriveApp.getFoldersByName(BACKUP_FOLDER);
+  var folder = it.hasNext() ? it.next() : DriveApp.createFolder(BACKUP_FOLDER);
+  var name = ss.getName() + ' — копия ' + ttFmt(new Date(), 'yyyy-MM-dd HH:mm');
+  var copy = DriveApp.getFileById(ss.getId()).makeCopy(name, folder);
+  /* храним последние BACKUP_KEEP копий */
+  var files = [], fi = folder.getFiles();
+  while (fi.hasNext()) files.push(fi.next());
+  files.sort(function (a, b) { return b.getDateCreated().getTime() - a.getDateCreated().getTime(); });
+  files.slice(BACKUP_KEEP).forEach(function (f) { f.setTrashed(true); });
+  var props = ttProps();
+  props.setProperty('last_backup', new Date().toISOString());
+  props.setProperty('last_backup_url', copy.getUrl());
+  return { name: name, url: copy.getUrl() };
+}
+function ttBackupReply() {
+  try {
+    var b = ttBackup();
+    return { ok: true, name: b.name, url: b.url };
+  } catch (err) {
+    return { ok: false, error: 'needs_authorization', detail: String(err && err.message || err) };
+  }
+}
+/** Запускается по расписанию раз в неделю. */
+function ttWeeklyBackup() {
+  try { ttBackup(); } catch (err) { ttTgSafe('⚠️ Не удалось сделать резервную копию таблицы: ' + ttHtml(String(err && err.message || err))); }
+}
+
+/* ================= Telegram ================= */
+function ttHtml(s) { return String(s === null || s === undefined ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function ttTgApi(method, payload) {
+  var token = ttProps().getProperty('tg_token');
+  if (!token) throw new Error('tg_not_configured');
+  var res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/' + method, {
+    method: 'post', contentType: 'application/json', payload: JSON.stringify(payload || {}), muteHttpExceptions: true
+  });
+  var data = JSON.parse(res.getContentText() || '{}');
+  if (!data.ok) throw new Error('tg_error: ' + (data.description || res.getResponseCode()));
+  return data.result;
+}
+function ttTgSend(text) {
+  var chat = ttProps().getProperty('tg_chat');
+  if (!chat) throw new Error('tg_not_linked');
+  return ttTgApi('sendMessage', { chat_id: chat, text: text, parse_mode: 'HTML', disable_web_page_preview: true });
+}
+/** Уведомление, которое никогда не ломает основную работу (отметку сотрудника и т.п.). */
+function ttTgSafe(text) {
+  var props = ttProps();
+  if (!props.getProperty('tg_token') || !props.getProperty('tg_chat')) return false;
+  try { ttTgSend(text); return true; } catch (err) { return false; }
+}
+/** Находит чат, в котором администратор написал боту, и запоминает его. */
+function ttTgLink() {
+  var updates;
+  try { updates = ttTgApi('getUpdates', { allowed_updates: ['message'] }); }
+  catch (err) {
+    var m = String(err && err.message || err);
+    if (/not_configured/.test(m)) return { ok: false, error: 'tg_not_configured' };
+    if (/Unauthorized|401|Not Found|404/.test(m)) return { ok: false, error: 'bad_tg_token' };
+    if (/permission|authoriz|разреш/i.test(m)) return { ok: false, error: 'needs_authorization' };
+    return { ok: false, error: m };
+  }
+  var chat = null;
+  (updates || []).forEach(function (u) { if (u.message && u.message.chat) chat = u.message.chat; });
+  if (!chat) return { ok: false, error: 'tg_no_messages' };
+  var name = chat.title || [chat.first_name, chat.last_name].filter(Boolean).join(' ') || chat.username || String(chat.id);
+  var props = ttProps();
+  props.setProperty('tg_chat', String(chat.id));
+  props.setProperty('tg_chat_name', name);
+  ttTgSend('✅ Уведомления учёта рабочего времени подключены к этому чату.');
+  return { ok: true, chat: name };
+}
+function ttTgTest() {
+  try { ttTgSend('🔔 Проверка: уведомления работают.'); return { ok: true }; }
+  catch (err) { return { ok: false, error: String(err && err.message || err) }; }
+}
+
+/* ================= автоматика по расписанию ================= */
+function ttMin(hm) { var m = /^(\d{1,2}):(\d{2})$/.exec(String(hm || '')); return m ? Number(m[1]) * 60 + Number(m[2]) : null; }
+
+/** Ставит расписание: проверка каждые 15 минут и резервная копия по воскресеньям в 3:00. */
+function installAutomation() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    var h = t.getHandlerFunction();
+    if (h === 'ttTick' || h === 'ttWeeklyBackup') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('ttTick').timeBased().everyMinutes(15).create();
+  ScriptApp.newTrigger('ttWeeklyBackup').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(3).create();
+  /* проверяем, что доступ к Диску и интернету тоже разрешён */
+  DriveApp.getRootFolder();
+  return 'Автоматика установлена';
+}
+function ttInstallReply() {
+  try { installAutomation(); return { ok: true, settings: ttSettingsFull() }; }
+  catch (err) { return { ok: false, error: 'needs_authorization', detail: String(err && err.message || err) }; }
+}
+
+/** Каждые 15 минут: автозакрытие забытых смен, «кто не пришёл», вечерняя сводка. */
+function ttTick() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return;
+  try { ttTickAt(new Date()); } finally { try { lock.releaseLock(); } catch (ignore) {} }
+}
+
+function ttTickAt(now) {
+  var props = ttProps();
+  props.setProperty('last_tick', now.toISOString());
+  var sett = ttSettings();
+  var today = ttFmt(now, 'yyyy-MM-dd');
+  var nowMin = ttMin(ttFmt(now, 'HH:mm'));
+  var workday = String(sett.workDays || '').indexOf(ttFmt(now, 'u')) >= 0;
+  var out = {};
+
+  /* 1. Ночью закрываем смены, у которых нет выхода за прошлые дни */
+  if (props.getProperty('autoclose_day') !== today) {
+    props.setProperty('autoclose_day', today);
+    out.autoClosed = ttAutoClose(now);
+    if (out.autoClosed.length && sett.tgDaily !== '0') {
+      ttTgSafe('🌙 Не отметили выход (смена закрыта автоматически, часы не засчитаны — поправьте в табеле):\n' +
+        out.autoClosed.map(function (x) { return '• ' + ttHtml(x.name) + ' — вход ' + x.when; }).join('\n'));
+    }
+  }
+
+  var emps = ttEmployeeList().filter(function (e) { return e.status !== ST_BLOCKED && e.bound; });
+  var start = ttMin(sett.workStart), end = ttMin(sett.workEnd);
+
+  /* 2. Кто не пришёл к началу дня (с учётом допуска на опоздание) */
+  if (workday && start !== null && nowMin >= start + (Number(sett.lateTolerance) || 0) && props.getProperty('absent_day') !== today) {
+    props.setProperty('absent_day', today);
+    var dayIn = ttTodayPunches(now);
+    out.absent = emps.filter(function (e) { return !dayIn[e.code] || !dayIn[e.code].firstIn; }).map(function (e) { return e.name; });
+    if (out.absent.length && sett.tgAbsent !== '0') {
+      ttTgSafe('⏰ К ' + sett.workStart + ' не отметили вход (' + out.absent.length + ' из ' + emps.length + '):\n' +
+        out.absent.map(function (n) { return '• ' + ttHtml(n); }).join('\n'));
+    }
+  }
+
+  /* 3. Сводка через час после конца рабочего дня */
+  if (workday && end !== null && nowMin >= end + 60 && props.getProperty('daily_day') !== today) {
+    props.setProperty('daily_day', today);
+    out.daily = ttDailySummary(now, sett, emps);
+    if (sett.tgDaily !== '0') ttTgSafe(out.daily);
+  }
+  return out;
+}
+
+/** Первая/последняя отметка каждого сотрудника за сегодня. */
+function ttTodayPunches(now) {
+  var today = ttFmt(now, 'yyyy-MM-dd'), res = {};
+  ttRows(ttAtt()).forEach(function (row) {
+    var ts = ttParseTs(row);
+    if (!ts || ttVoid(row) || ttFmt(ts, 'yyyy-MM-dd') !== today) return;
+    var code = ttStr(row[A_CODE]);
+    var x = res[code] = res[code] || { firstIn: null, last: null, outZone: false };
+    var type = ttStr(row[A_TYPE]);
+    if (type === 'вход' && (!x.firstIn || ts < x.firstIn)) x.firstIn = ts;
+    if (!x.last || ts >= x.last.ts) x.last = { ts: ts, type: type };
+    if (ttStr(row[A_ZONE]) === 'вне зоны' || ttStr(row[A_ZONE]) === 'без координат') x.outZone = true;
+  });
+  return res;
+}
+
+function ttDailySummary(now, sett, emps) {
+  var t = ttTodayPunches(now);
+  var start = ttMin(sett.workStart), tol = Number(sett.lateTolerance) || 0;
+  var came = [], late = [], absent = [], still = [], zone = [];
+  emps.forEach(function (e) {
+    var x = t[e.code];
+    if (!x || !x.firstIn) { absent.push(e.name); return; }
+    came.push(e.name);
+    var inMin = ttMin(ttFmt(x.firstIn, 'HH:mm'));
+    if (start !== null && inMin > start + tol) late.push(e.name + ' (' + ttFmt(x.firstIn, 'HH:mm') + ')');
+    if (x.last && x.last.type === 'вход') still.push(e.name);
+    if (x.outZone) zone.push(e.name);
+  });
+  var lines = ['📋 <b>Итоги дня ' + ttFmt(now, 'dd.MM.yyyy') + '</b>', 'Пришли: ' + came.length + ' из ' + emps.length];
+  function block(title, list) { if (list.length) lines.push(title + '\n' + list.map(function (n) { return '• ' + ttHtml(n); }).join('\n')); }
+  block('⏰ Опоздали:', late);
+  block('❌ Не пришли:', absent);
+  block('📍 Отметки вне зоны или без геопозиции:', zone);
+  block('🕘 Ещё не отметили выход:', still);
+  return lines.join('\n');
+}
+
+/** Закрывает смены без выхода за прошлые дни. Выход ставится через секунду после входа: часы = 0. */
+function ttAutoClose(now) {
+  var today = ttFmt(now, 'yyyy-MM-dd');
+  var last = {};
+  ttRows(ttAtt()).forEach(function (row) {
+    var ts = ttParseTs(row);
+    var code = ttStr(row[A_CODE]);
+    if (!ts || !code || ttVoid(row)) return;
+    if (!last[code] || ts.getTime() >= last[code].ts.getTime()) last[code] = { ts: ts, type: ttStr(row[A_TYPE]), name: ttStr(row[A_NAME]) };
+  });
+  var closed = [], att = ttAtt();
+  Object.keys(last).forEach(function (code) {
+    var l = last[code];
+    if (l.type !== 'вход' || ttFmt(l.ts, 'yyyy-MM-dd') >= today) return;
+    var ts = new Date(l.ts.getTime() + 1000);
+    att.appendRow([ttFmt(ts, 'dd.MM.yyyy'), ttFmt(ts, 'HH:mm:ss'), code, l.name, 'выход', '', '', '', '', '', SRC_AUTO, '',
+      ts.toISOString(), 'Выход не отмечен — смена закрыта автоматически']);
+    closed.push({ code: code, name: l.name, when: ttFmt(l.ts, 'dd.MM HH:mm') });
+  });
+  return closed;
 }

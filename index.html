@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#2563eb">
 <meta name="robots" content="noindex, nofollow">
 <title>Учёт рабочего времени</title>
-<link rel="stylesheet" href="styles.css?v=4.3">
+<link rel="stylesheet" href="styles.css?v=5.0">
 </head>
 <body>
 <div id="app">
@@ -84,9 +84,12 @@
       <div class="card" style="padding:8px 10px"><div id="repList"></div></div>
       <div class="card">
         <div class="grid2">
+          <button class="btn primary" data-action="xlsx">Табель Excel за месяц</button>
+          <button class="btn" data-action="punch-add">Добавить отметку</button>
           <button class="btn" data-action="report-refresh">Обновить</button>
           <button class="btn" data-action="csv">Скачать CSV</button>
         </div>
+        <div class="muted small" style="margin-top:8px">Excel — за календарный месяц, в который попадает «С даты». Чтобы исправить отметку, нажмите ✎ в строке дня.</div>
         <div class="muted small" style="margin-top:8px">Все отметки хранятся в Google Таблице, лист «Отметки». Часы считаются с учётом обеда, если смена длиннее 6 часов.</div>
       </div>
     </section>
@@ -150,8 +153,45 @@
           <label class="field">Обед, мин<input class="input" type="number" id="setLunch" min="0" step="5"></label>
           <label class="field">Опоздание после, мин<input class="input" type="number" id="setLate" min="0" step="5"></label>
         </div>
+        <div class="field" style="margin-top:10px">Рабочие дни</div>
+        <div class="row wrap" id="setDays" style="gap:6px;margin-top:6px"></div>
+      </div>
+      <div class="card">
+        <div class="row between"><h3>Уведомления в Telegram</h3><span class="badge" id="tgBadge">не подключено</span></div>
+        <details class="acc" style="margin-top:8px" id="tgHow">
+          <summary>Как подключить (3 минуты)</summary>
+          <ol class="small muted" style="padding-left:18px;margin:8px 0">
+            <li>В Telegram откройте <b>@BotFather</b> → <b>/newbot</b> → придумайте имя и адрес бота.</li>
+            <li>BotFather пришлёт токен вида <span class="mono">123456789:AA…</span> — вставьте его ниже и нажмите «Сохранить».</li>
+            <li>Откройте своего нового бота и нажмите <b>«Старт»</b> (или напишите ему любое сообщение). Для общего чата — добавьте бота в группу и напишите там.</li>
+            <li>Нажмите <b>«Подключить чат»</b> — бот пришлёт подтверждение.</li>
+          </ol>
+        </details>
+        <div class="row" style="margin-top:8px">
+          <input class="input mono" type="password" id="tgToken" placeholder="Токен бота" autocomplete="off">
+          <button class="btn" data-action="tg-save" style="flex:0 0 auto">Сохранить</button>
+        </div>
+        <div class="grid2" style="margin-top:8px">
+          <button class="btn primary" data-action="tg-link">Подключить чат</button>
+          <button class="btn" data-action="tg-test">Проверить</button>
+        </div>
+        <div class="sep"></div>
+        <label class="chk"><input type="checkbox" id="tgOutZone"> Сразу: отметка вне рабочего места или без геопозиции</label>
+        <label class="chk"><input type="checkbox" id="tgAbsent"> Утром: кто не пришёл к началу дня</label>
+        <label class="chk"><input type="checkbox" id="tgDaily"> Вечером: итоги дня; ночью: кто забыл отметить выход</label>
+        <div class="muted small">Галочки сохраняются кнопкой «Сохранить настройки» внизу. Утренние и вечерние сообщения работают, когда включена автоматика.</div>
       </div>
       <button class="btn primary block" data-action="save-settings">Сохранить настройки</button>
+      <div class="card">
+        <div class="row between"><h3>Автоматика и резервные копии</h3><span class="badge" id="autoBadge">…</span></div>
+        <div class="muted small" style="margin-top:6px">Каждые 15 минут сервер проверяет: закрывает забытые смены (ночью), отправляет утренние и вечерние сообщения. По воскресеньям в 3:00 — копия таблицы в папку «Учёт рабочего времени — резервные копии» на вашем Google Диске (хранятся 8 последних).</div>
+        <div id="autoHelp" class="warn hidden" style="margin-top:8px">Google ещё не разрешил скрипту работать с Диском, интернетом и расписанием. Откройте таблицу → <b>Расширения → Apps Script</b>, вверху выберите функцию <b>installAutomation</b> и нажмите <b>«Выполнить»</b>. Google попросит доступ: выберите свой аккаунт → «Дополнительные настройки» → «Перейти на страницу…» → <b>«Разрешить»</b>. Потом вернитесь сюда.</div>
+        <div class="grid2" style="margin-top:8px">
+          <button class="btn primary" data-action="auto-install">Включить автоматику</button>
+          <button class="btn" data-action="backup-now">Копия сейчас</button>
+        </div>
+        <div class="muted small" id="backupInfo" style="margin-top:8px"></div>
+      </div>
       <div class="card">
         <h3>Пароль администратора</h3>
         <div class="grid2" style="margin-top:8px">
@@ -170,7 +210,7 @@
         </details>
         <button class="btn danger block" style="margin-top:10px" data-action="logout">Выйти на этом устройстве</button>
       </div>
-      <footer class="foot">версия 4.0</footer>
+      <footer class="foot">версия 5.0</footer>
     </section>
   </main>
   <nav class="bottom hidden" id="nav"></nav>
@@ -180,6 +220,7 @@
 <div id="printArea"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-<script src="app.js?v=4.3"></script>
+<script src="xlsx.js?v=5.0"></script>
+<script src="app.js?v=5.0"></script>
 </body>
 </html>
