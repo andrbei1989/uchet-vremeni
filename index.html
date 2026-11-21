@@ -24,12 +24,8 @@
     <section class="view" id="v-login">
       <div class="card">
         <h3>Вход администратора</h3>
-        <div class="muted small" style="margin:2px 0 10px">Укажите ссылку на сервер (Google Apps Script) и пароль администратора.</div>
-        <label class="field">Ссылка на сервер
-          <input class="input mono" id="loginUrl" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off" spellcheck="false">
-        </label>
         <label class="field" style="margin-top:8px">Пароль администратора
-          <input class="input" type="password" id="loginPw" autocomplete="current-password">
+          <input class="input" type="password" id="loginPw" autocomplete="current-password" autofocus>
         </label>
         <div id="setupBox" class="hidden">
           <div class="warn" style="margin-top:10px">Сервер новый: придумайте пароль администратора (не короче 6 символов) и повторите его.</div>
@@ -41,6 +37,13 @@
       </div>
       <div class="card">
         <details class="acc">
+          <summary>Другой сервер</summary>
+          <div class="muted small" style="margin:8px 0">Нужно, только если вы создали новую таблицу со своим сервером.</div>
+          <label class="field">Ссылка на сервер
+            <input class="input mono" id="loginUrl" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off" spellcheck="false">
+          </label>
+        </details>
+        <details class="acc" style="margin-top:8px">
           <summary>Как создать сервер (10 минут, один раз)</summary>
           <ol class="small muted" style="padding-left:18px;margin:8px 0">
             <li>Создайте новую Google Таблицу.</li>

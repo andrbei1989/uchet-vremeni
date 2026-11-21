@@ -2,6 +2,8 @@
 /* Учёт рабочего времени — панель администратора. Все данные живут на сервере (Google Таблица). */
 
 var AUTH_KEY = "tt4_admin";
+/* сервер этой организации; его можно сменить на экране входа («Другой сервер») */
+var DEFAULT_SERVER = "https://script.google.com/macros/s/AKfycby5_KTl2-IpW_wwsVHOQJ9Pb1IEfW_BpI2LPGkfRcZuRUk9XyasibLjQX-TkBq4W8xP/exec";
 
 /* ================= утилиты ================= */
 function $(sel, root) { return (root || document).querySelector(sel); }
@@ -432,7 +434,7 @@ function show(view) {
 /* ================= вход ================= */
 var setupMode = false;
 async function doLogin() {
-  var server = $("#loginUrl").value.trim();
+  var server = $("#loginUrl").value.trim() || DEFAULT_SERVER;
   var pw = $("#loginPw").value;
   if (!validServer(server)) return toast("Ссылка должна быть вида https://script.google.com/macros/s/…/exec");
   var btn = $("#loginBtn");
@@ -724,5 +726,6 @@ buildNav();
 getGsCode().then(function (t) { $("#gsPre").textContent = t; }).catch(function () { $("#gsPre").textContent = "Код лежит в файле apps-script.gs в репозитории."; });
 /* старые данные версии 3 больше не используются */
 ["ttrack_employees", "ttrack_records", "ttrack_settings", "ttrack_me", "ttrack_device_id", "ttrack_server", "tt_board"].forEach(lsDel);
-if (AUTH && validServer(AUTH.server)) { $("#loginUrl").value = AUTH.server; enter(); }
+$("#loginUrl").value = (AUTH && AUTH.server) || DEFAULT_SERVER;
+if (AUTH && validServer(AUTH.server)) enter();
 else show("login");
