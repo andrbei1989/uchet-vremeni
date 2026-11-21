@@ -280,12 +280,25 @@ async function startRegistration(code, token) {
       '<button class="btn block primary" style="margin-top:14px" data-action="close">Понятно</button>');
     return;
   }
-  if (emp.token !== token) {
-    openModal(sheetHead("Код устарел", "Этот регистрационный QR был перевыпущен. Возьмите у администратора актуальный.") +
+  if (!/^[A-Z2-9]{8}$/.test(String(token || ""))) {
+    openModal(sheetHead("Код не распознан", "В QR-коде нет ключа устройства. Распечатайте код заново из приложения.") +
       '<button class="btn block primary" style="margin-top:14px" data-action="close">Понятно</button>');
     return;
   }
-  if (S.me && S.me.empCode === emp.empCode) { showAuthorized(emp, "repeat"); return; }
+  /* QR выпущен на другом устройстве (например, на компьютере администратора).
+     Ключ из QR считаем актуальным: список сотрудников хранится в каждом браузере
+     отдельно, поэтому сравнивать его с локальной копией нельзя. */
+  if (emp.token !== token) {
+    emp.token = token;
+    emp.boundAt = null;
+    emp.verified = false;
+    emp.device = "";
+    saveEmp();
+  }
+  var alreadyHere = S.me && S.me.empCode === emp.empCode && S.me.token === token;
+  if (alreadyHere) { showAuthorized(emp, "repeat"); return; }
+  /* Тот же сотрудник, но код перевыпущен — старая привязка на телефоне больше не действует */
+  if (S.me && S.me.empCode === emp.empCode && S.me.token !== token) { S.me = null; saveMe(); }
 
   if (S.set.sheetUrl && S.set.checkRegistration) {
     openModal(spinnerSheet("Авторизуем устройство…", "Проверяем код в таблице"), { closable: false });
@@ -318,6 +331,7 @@ async function startRegistration(code, token) {
         '<button class="btn block primary" style="margin-top:14px" data-action="close">Понятно</button>');
       return;
     }
+    if (reply.empName && reply.empName !== emp.name) { emp.name = reply.empName; saveEmp(); }
     bindDevice(emp, true);
     return;
   }
