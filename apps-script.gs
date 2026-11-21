@@ -596,7 +596,7 @@ function ttTgLink() {
     var m = String(err && err.message || err);
     if (/not_configured/.test(m)) return { ok: false, error: 'tg_not_configured' };
     if (/Unauthorized|401|Not Found|404/.test(m)) return { ok: false, error: 'bad_tg_token' };
-    if (/permission|authoriz|разреш/i.test(m)) return { ok: false, error: 'needs_authorization' };
+    if (/permission|authoriz|разреш/i.test(m)) return { ok: false, error: 'needs_authorization', detail: m };
     return { ok: false, error: m };
   }
   var chat = null;
@@ -625,8 +625,9 @@ function installAutomation() {
   });
   ScriptApp.newTrigger('ttTick').timeBased().everyMinutes(15).create();
   ScriptApp.newTrigger('ttWeeklyBackup').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(3).create();
-  /* проверяем, что доступ к Диску и интернету тоже разрешён */
+  /* вызываем без перехвата ошибок, чтобы редактор сразу запросил доступ к Диску и к внешним сервисам */
   DriveApp.getRootFolder();
+  UrlFetchApp.fetch('https://api.telegram.org/', { muteHttpExceptions: true });
   return 'Автоматика установлена';
 }
 function ttInstallReply() {
