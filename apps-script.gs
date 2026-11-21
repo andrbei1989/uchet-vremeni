@@ -130,6 +130,16 @@ function ttChangePassword(p) {
 function ttSheet(name, headers, textCols) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName(name);
+  if (sh && sh.getLastColumn() > 0) {
+    /* лист от старой версии приложения с другими столбцами — не трогаем его данные, а откладываем в сторону */
+    var head = sh.getRange(1, 1, 1, headers.length).getValues()[0].map(ttStr);
+    if (head.join('|') !== headers.join('|')) {
+      var old = name + ' (старая версия)', n = 2;
+      while (ss.getSheetByName(old)) old = name + ' (старая версия ' + (n++) + ')';
+      sh.setName(old);
+      sh = null;
+    }
+  }
   if (!sh) {
     sh = ss.insertSheet(name);
     sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
