@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#2563eb">
 <meta name="robots" content="noindex, nofollow">
 <title>Учёт рабочего времени</title>
-<link rel="stylesheet" href="styles.css?v=5.0">
+<link rel="stylesheet" href="styles.css?v=6.0">
 </head>
 <body>
 <div id="app">
@@ -144,17 +144,14 @@
         <div class="muted small" style="margin-top:6px">«Взять мои координаты» работает, если вы сейчас на рабочем месте. Иначе найдите точку в Google Картах: долгое нажатие → координаты.</div>
       </div>
       <div class="card">
-        <h3>Рабочее время</h3>
-        <div class="grid2" style="margin-top:8px">
-          <label class="field">Начало<input class="input" type="time" id="setStart"></label>
-          <label class="field">Конец<input class="input" type="time" id="setEnd"></label>
-        </div>
+        <h3>График работы</h3>
+        <div class="muted small" style="margin:2px 0 8px">Отметьте рабочие дни и время. По графику считаются опоздания, норма часов, утренние и вечерние сообщения.</div>
+        <div id="setSched"></div>
         <div class="grid2" style="margin-top:8px">
           <label class="field">Обед, мин<input class="input" type="number" id="setLunch" min="0" step="5"></label>
           <label class="field">Опоздание после, мин<input class="input" type="number" id="setLate" min="0" step="5"></label>
         </div>
-        <div class="field" style="margin-top:10px">Рабочие дни</div>
-        <div class="row wrap" id="setDays" style="gap:6px;margin-top:6px"></div>
+        <div class="muted small" style="margin-top:6px">Обед вычитается из смен длиннее 6 часов.</div>
       </div>
       <div class="card">
         <div class="row between"><h3>Уведомления в Telegram</h3><span class="badge" id="tgBadge">не подключено</span></div>
@@ -210,7 +207,7 @@
         </details>
         <button class="btn danger block" style="margin-top:10px" data-action="logout">Выйти на этом устройстве</button>
       </div>
-      <footer class="foot">версия 5.0</footer>
+      <footer class="foot">версия 6.0</footer>
     </section>
   </main>
   <nav class="bottom hidden" id="nav"></nav>
@@ -220,7 +217,7 @@
 <div id="printArea"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-<script src="xlsx.js?v=5.0"></script>
-<script src="app.js?v=5.0"></script>
+<script src="xlsx.js?v=6.0"></script>
+<script src="app.js?v=6.0"></script>
 </body>
 </html>

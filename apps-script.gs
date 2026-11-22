@@ -1,6 +1,6 @@
 /**
  * Учёт рабочего времени — сервер на Google Apps Script.
- * Версия 5.
+ * Версия 6.
  *
  * Установка (один раз):
  * 1. Создайте Google Таблицу.
@@ -20,7 +20,7 @@
  * (Настройки → Автоматика), когда доступ уже разрешён.
  */
 
-var VERSION = 5;
+var VERSION = 6;
 
 var SHEET_EMP = 'Сотрудники';
 var SHEET_ATT = 'Отметки';
@@ -206,12 +206,15 @@ function ttNum(v) {
 var SETTING_KEYS = {
   office_lat: 'lat', office_lng: 'lng', radius_m: 'radius',
   work_start: 'workStart', work_end: 'workEnd', lunch_min: 'lunchMinutes', late_min: 'lateTolerance',
-  work_days: 'workDays', tg_out_zone: 'tgOutZone', tg_absent: 'tgAbsent', tg_daily: 'tgDaily'
+  work_days: 'workDays', tg_out_zone: 'tgOutZone', tg_absent: 'tgAbsent', tg_daily: 'tgDaily',
+  schedule: 'schedule'
 };
-var TEXT_SETTINGS = { workStart: 1, workEnd: 1, workDays: 1, tgOutZone: 1, tgAbsent: 1, tgDaily: 1 };
+var TEXT_SETTINGS = { workStart: 1, workEnd: 1, workDays: 1, tgOutZone: 1, tgAbsent: 1, tgDaily: 1, schedule: 1 };
+/* график по дням недели: «1=08:00-17:00;2=…;6=08:00-14:00», 1 — понедельник … 7 — воскресенье */
+var SCHEDULE_RE = /^([1-7]=\d{1,2}:\d{2}-\d{1,2}:\d{2})(;[1-7]=\d{1,2}:\d{2}-\d{1,2}:\d{2})*$/;
 function ttSettings() {
   var out = { lat: null, lng: null, radius: 100, workStart: '09:00', workEnd: '18:00', lunchMinutes: 60, lateTolerance: 10,
-    workDays: '12345', tgOutZone: '1', tgAbsent: '1', tgDaily: '1' };
+    workDays: '12345', tgOutZone: '1', tgAbsent: '1', tgDaily: '1', schedule: '' };
   ttRows(ttSet()).forEach(function (r) {
     var k = SETTING_KEYS[ttStr(r[0])];
     if (!k) return;
@@ -239,6 +242,8 @@ function ttSaveSettings(p) {
       if (v && !/^\d{1,2}:\d{2}$/.test(v)) return;
     } else if (field === 'workDays') {
       if (!/^[1-7]{0,7}$/.test(v)) return;
+    } else if (field === 'schedule') {
+      if (v && !SCHEDULE_RE.test(v)) return;
     } else if (TEXT_SETTINGS[field]) {
       v = v === '1' || v === 'true' ? '1' : '0';
     } else if (v !== '' && ttNum(v) === null) return;
@@ -370,7 +375,9 @@ function ttPunch(p) {
   var att = ttAtt();
   var last = ttLastPunch(att, code);
   if (last && last.type === typeRu && now.getTime() - last.ts.getTime() < DUP_WINDOW_MS) {
-    return ttPunchReply(type, name, code, last.ts, last.zone, last.distance, true);
+    var dup = ttPunchReply(type, name, code, last.ts, last.zone, last.distance, true);
+    dup.stats = ttSafeStats(code, now);
+    return dup;
   }
 
   var lat = ttNum(p.lat), lng = ttNum(p.lng), acc = ttNum(p.acc);
@@ -392,7 +399,107 @@ function ttPunch(p) {
       (zone === 'вне зоны' ? '⚠️ вне рабочего места, ' + distance + ' м' : '⚠️ без геопозиции'));
   }
 
-  return ttPunchReply(type, name, code, now, zone, distance, false, last);
+  var reply = ttPunchReply(type, name, code, now, zone, distance, false, last);
+  reply.stats = ttSafeStats(code, now);
+  return reply;
+}
+
+/* ================= статистика сотрудника за месяц ================= */
+/** Статистика никогда не должна мешать отметке: при любой ошибке просто не показываем её. */
+function ttSafeStats(code, now) {
+  try { return ttMonthStats(code, now); } catch (err) { return null; }
+}
+
+/** Пары «вход — выход» по тем же правилам, что и табель в админке. */
+function ttPairs(punches, now) {
+  var out = [], open = null;
+  var today = ttFmt(now, 'yyyy-MM-dd');
+  punches.forEach(function (r) {
+    if (r.type === 'in') {
+      if (open) out.push({ in: open, out: null, broken: 'no-out' });
+      open = r;
+    } else if (r.source === SRC_AUTO) {
+      if (open) { out.push({ in: open, out: r, broken: 'auto' }); open = null; }
+    } else if (open && (r.day === open.day || r.ts - open.ts < 16 * 3600000)) {
+      out.push({ in: open, out: r });
+      open = null;
+    } else {
+      if (open) { out.push({ in: open, out: null, broken: 'no-out' }); open = null; }
+      out.push({ in: null, out: r, broken: 'no-in' });
+    }
+  });
+  if (open) out.push({ in: open, out: null, broken: open.day === today ? 'open' : 'no-out' });
+  return out;
+}
+
+function ttMonthStats(code, now) {
+  var sett = ttSettings();
+  var lunch = Number(sett.lunchMinutes) || 0;
+  var tol = Number(sett.lateTolerance) || 0;
+  var monthKey = ttFmt(now, 'yyyy-MM');
+  var today = ttFmt(now, 'yyyy-MM-dd');
+
+  var all = [];
+  ttRows(ttAtt()).forEach(function (row) {
+    if (ttStr(row[A_CODE]) !== code || ttVoid(row)) return;
+    var ts = ttParseTs(row);
+    if (!ts) return;
+    all.push({ ts: ts.getTime(), day: ttFmt(ts, 'yyyy-MM-dd'), type: ttStr(row[A_TYPE]) === 'выход' ? 'out' : 'in', source: ttStr(row[A_SRC]) });
+  });
+  all.sort(function (a, b) { return a.ts - b.ts; });
+  var firstDay = all.length ? all[0].day : today;
+
+  var hoursOf = function (p) {
+    var h = (p.out.ts - p.in.ts) / 3600000;
+    if (h > 6 && lunch > 0) h -= lunch / 60;
+    return h > 0 ? h : 0;
+  };
+  var pairs = ttPairs(all, now).filter(function (p) { return (p.in || p.out).day.slice(0, 7) === monthKey; });
+
+  var hours = 0, shifts = 0, forgotten = 0, perDay = {}, firstIn = {}, todayClosed = false;
+  pairs.forEach(function (p) {
+    var d = (p.in || p.out).day;
+    if (p.in && p.out && !p.broken) {
+      var h = hoursOf(p);
+      hours += h; shifts++;
+      perDay[d] = (perDay[d] || 0) + h;
+      if (d === today) todayClosed = true;
+    }
+    if (p.broken === 'auto' || p.broken === 'no-out') forgotten++;
+    if (p.in && (!firstIn[d] || p.in.ts < firstIn[d])) firstIn[d] = p.in.ts;
+  });
+  if (pairs.some(function (p) { return (p.in || p.out).day === today && p.broken === 'open'; })) todayClosed = false;
+
+  var late = 0;
+  Object.keys(firstIn).forEach(function (d) {
+    var t = new Date(firstIn[d]);
+    var sc = ttDaySched(sett, ttFmt(t, 'u'));
+    if (!sc) return; /* в выходной опозданий не бывает */
+    if (ttMin(ttFmt(t, 'HH:mm')) > sc.startMin + tol) late++;
+  });
+
+  /* недоработка по дням: норма каждого рабочего дня по графику */
+  var under = 0, workdays = 0, normTotal = 0;
+  var parts = monthKey.split('-');
+  var d0 = new Date(Number(parts[0]), Number(parts[1]) - 1, 1, 12);
+  for (var d = new Date(d0); ttFmt(d, 'yyyy-MM') === monthKey; d.setDate(d.getDate() + 1)) {
+    var key = ttFmt(d, 'yyyy-MM-dd');
+    if (key > today) break;
+    if (key < firstDay) continue;
+    if (key === today && !todayClosed) continue;
+    var dayNorm = ttDayNorm(ttDaySched(sett, ttFmt(d, 'u')), lunch);
+    if (!dayNorm) continue;
+    workdays++;
+    normTotal += dayNorm;
+    under += Math.max(0, dayNorm - (perDay[key] || 0));
+  }
+
+  var r1 = function (x) { return Math.round(x * 10) / 10; };
+  return {
+    month: Number(parts[1]), year: Number(parts[0]),
+    hours: r1(hours), shifts: shifts, late: late, forgotten: forgotten,
+    under: r1(under), norm: r1(normTotal), workdays: workdays
+  };
 }
 
 function ttPunchReply(type, name, code, ts, zone, distance, duplicate, prev) {
@@ -617,6 +724,29 @@ function ttTgTest() {
 /* ================= автоматика по расписанию ================= */
 function ttMin(hm) { var m = /^(\d{1,2}):(\d{2})$/.exec(String(hm || '')); return m ? Number(m[1]) * 60 + Number(m[2]) : null; }
 
+/** График на день недели u (1 — пн … 7 — вс): { start:'08:00', end:'17:00', startMin, endMin } или null, если выходной. */
+function ttDaySched(sett, u) {
+  u = String(u);
+  var start = null, end = null;
+  if (sett.schedule) {
+    String(sett.schedule).split(';').forEach(function (part) {
+      var m = /^([1-7])=(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$/.exec(part);
+      if (m && m[1] === u) { start = m[2]; end = m[3]; }
+    });
+  } else if (String(sett.workDays || '').indexOf(u) >= 0) {
+    start = sett.workStart; end = sett.workEnd;
+  }
+  if (!start || ttMin(start) === null || ttMin(end) === null) return null;
+  return { start: start, end: end, startMin: ttMin(start), endMin: ttMin(end) };
+}
+/** Норма часов за день по графику: длительность минус обед, если день длиннее 6 часов. */
+function ttDayNorm(sched, lunch) {
+  if (!sched || sched.endMin <= sched.startMin) return 0;
+  var h = (sched.endMin - sched.startMin) / 60;
+  if (h > 6 && lunch > 0) h -= lunch / 60;
+  return h;
+}
+
 /** Ставит расписание: проверка каждые 15 минут и резервная копия по воскресеньям в 3:00. */
 function installAutomation() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
@@ -648,7 +778,8 @@ function ttTickAt(now) {
   var sett = ttSettings();
   var today = ttFmt(now, 'yyyy-MM-dd');
   var nowMin = ttMin(ttFmt(now, 'HH:mm'));
-  var workday = String(sett.workDays || '').indexOf(ttFmt(now, 'u')) >= 0;
+  var sched = ttDaySched(sett, ttFmt(now, 'u'));
+  var workday = !!sched;
   var out = {};
 
   /* 1. Ночью закрываем смены, у которых нет выхода за прошлые дни */
@@ -662,7 +793,7 @@ function ttTickAt(now) {
   }
 
   var emps = ttEmployeeList().filter(function (e) { return e.status !== ST_BLOCKED && e.bound; });
-  var start = ttMin(sett.workStart), end = ttMin(sett.workEnd);
+  var start = sched ? sched.startMin : null, end = sched ? sched.endMin : null;
 
   /* 2. Кто не пришёл к началу дня (с учётом допуска на опоздание) */
   if (workday && start !== null && nowMin >= start + (Number(sett.lateTolerance) || 0) && props.getProperty('absent_day') !== today) {
@@ -670,7 +801,7 @@ function ttTickAt(now) {
     var dayIn = ttTodayPunches(now);
     out.absent = emps.filter(function (e) { return !dayIn[e.code] || !dayIn[e.code].firstIn; }).map(function (e) { return e.name; });
     if (out.absent.length && sett.tgAbsent !== '0') {
-      ttTgSafe('⏰ К ' + sett.workStart + ' не отметили вход (' + out.absent.length + ' из ' + emps.length + '):\n' +
+      ttTgSafe('⏰ К ' + sched.start + ' не отметили вход (' + out.absent.length + ' из ' + emps.length + '):\n' +
         out.absent.map(function (n) { return '• ' + ttHtml(n); }).join('\n'));
     }
   }
@@ -702,7 +833,8 @@ function ttTodayPunches(now) {
 
 function ttDailySummary(now, sett, emps) {
   var t = ttTodayPunches(now);
-  var start = ttMin(sett.workStart), tol = Number(sett.lateTolerance) || 0;
+  var sc = ttDaySched(sett, ttFmt(now, 'u'));
+  var start = sc ? sc.startMin : null, tol = Number(sett.lateTolerance) || 0;
   var came = [], late = [], absent = [], still = [], zone = [];
   emps.forEach(function (e) {
     var x = t[e.code];

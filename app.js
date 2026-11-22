@@ -273,10 +273,46 @@ function hoursOf(p) {
   if (h > 6 && lunch > 0) h -= lunch / 60;
   return h > 0 ? h : 0;
 }
+/* ================= график по дням недели ================= */
+var DAY_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+/** {1:{start,end}, …, 6:{…}} — из настройки schedule, а если её нет — из старых workStart/workEnd/workDays */
+function scheduleMap(s) {
+  s = s || S.settings;
+  var map = {};
+  if (s.schedule) {
+    String(s.schedule).split(";").forEach(function (part) {
+      var m = /^([1-7])=(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$/.exec(part);
+      if (m) map[m[1]] = { start: m[2], end: m[3] };
+    });
+  } else {
+    String(s.workDays || "12345").split("").forEach(function (d) { map[d] = { start: s.workStart || "09:00", end: s.workEnd || "18:00" }; });
+  }
+  return map;
+}
+function schedFor(date) {
+  var d = new Date(date), wd = d.getDay() === 0 ? 7 : d.getDay();
+  return scheduleMap()[String(wd)] || null;
+}
+function scheduleText() {
+  var map = scheduleMap(), groups = [];
+  for (var i = 1; i <= 7; i++) {
+    var x = map[String(i)];
+    if (!x) continue;
+    var last = groups[groups.length - 1];
+    if (last && last.start === x.start && last.end === x.end && last.to === i - 1) last.to = i;
+    else groups.push({ from: i, to: i, start: x.start, end: x.end });
+  }
+  return groups.map(function (g) {
+    return DAY_NAMES[g.from - 1] + (g.to > g.from ? "–" + DAY_NAMES[g.to - 1] : "") + " " + g.start + "–" + g.end;
+  }).join(", ") || "не задан";
+}
+
 function isLate(p) {
   if (!p.in) return false;
   var d = new Date(p.in.ts);
-  var st = String(S.settings.workStart || "09:00").split(":");
+  var sc = schedFor(d);
+  if (!sc) return false; /* выходной */
+  var st = String(sc.start).split(":");
   var limit = new Date(d.getFullYear(), d.getMonth(), d.getDate(), Number(st[0]) || 0, Number(st[1]) || 0);
   return d.getTime() > limit.getTime() + (Number(S.settings.lateTolerance) || 0) * 60000;
 }
@@ -412,14 +448,18 @@ function renderSettings() {
   $("#setLat").value = s.lat === null ? "" : s.lat;
   $("#setLng").value = s.lng === null ? "" : s.lng;
   $("#setRadius").value = s.radius;
-  $("#setStart").value = s.workStart;
-  $("#setEnd").value = s.workEnd;
   $("#setLunch").value = s.lunchMinutes;
   $("#setLate").value = s.lateTolerance;
   $("#serverUrl").textContent = AUTH.server;
-  var days = String(s.workDays || "");
-  $("#setDays").innerHTML = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"].map(function (d, i) {
-    return '<label class="chk" style="padding:0 6px 0 0"><input type="checkbox" data-day="' + (i + 1) + '"' + (days.indexOf(String(i + 1)) >= 0 ? " checked" : "") + "> " + d + "</label>";
+  var map = scheduleMap(s);
+  $("#setSched").innerHTML = DAY_NAMES.map(function (d, i) {
+    var k = String(i + 1), x = map[k], on = !!x;
+    return '<div class="row" style="gap:8px;margin-top:6px" data-sched-row="' + k + '">' +
+      '<label class="chk" style="width:62px;padding:0"><input type="checkbox" data-sched-on="' + k + '"' + (on ? " checked" : "") + "> " + d + "</label>" +
+      '<input class="input" type="time" data-sched-start="' + k + '" value="' + esc(x ? x.start : "08:00") + '"' + (on ? "" : " disabled") + ">" +
+      '<span class="muted">–</span>' +
+      '<input class="input" type="time" data-sched-end="' + k + '" value="' + esc(x ? x.end : "17:00") + '"' + (on ? "" : " disabled") + ">" +
+      "</div>";
   }).join("");
   $("#tgOutZone").checked = s.tgOutZone !== "0";
   $("#tgAbsent").checked = s.tgAbsent !== "0";
@@ -439,8 +479,17 @@ function renderSettings() {
     ? "Последняя копия: " + esc(s.lastBackup) + (s.lastBackupUrl ? ' · <a href="' + esc(s.lastBackupUrl) + '" target="_blank" rel="noopener">открыть</a>' : "")
     : "Копий ещё не было.";
 }
-function workDaysValue() {
-  return Array.prototype.map.call(document.querySelectorAll("#setDays input:checked"), function (c) { return c.dataset.day; }).join("");
+function scheduleValue() {
+  var parts = [];
+  for (var i = 1; i <= 7; i++) {
+    var on = $('[data-sched-on="' + i + '"]');
+    if (!on || !on.checked) continue;
+    var st = $('[data-sched-start="' + i + '"]').value, en = $('[data-sched-end="' + i + '"]').value;
+    if (!st || !en) throw new Error("Укажите время для " + DAY_NAMES[i - 1]);
+    if (st >= en) throw new Error(DAY_NAMES[i - 1] + ": конец должен быть позже начала");
+    parts.push(i + "=" + st + "-" + en);
+  }
+  return parts.join(";");
 }
 
 /* ================= навигация ================= */
@@ -676,15 +725,15 @@ var actions = {
     if (e) downloadDataUrl(qrDataUrl(linkReg(e), 800), "qr-" + e.code + ".png");
   },
   "print-posters": function () {
-    /* печатные постеры видят сотрудники — на русском и казахском */
-    var brand = '<div class="brand">Учёт рабочего времени<br><span class="kz">Жұмыс уақытын есепке алу</span></div>';
+    /* печатные постеры видят сотрудники — на русском и узбекском */
+    var brand = '<div class="brand">Учёт рабочего времени<br><span class="uz">Ish vaqtini hisobga olish</span></div>';
     doPrint(
-      '<div class="print-poster">' + brand + '<div class="word in">ВХОД<span class="kz">КІРУ</span></div>' +
+      '<div class="print-poster">' + brand + '<div class="word in">ВХОД<span class="uz">KIRISH</span></div>' +
       '<img src="' + qrDataUrl(linkIn(), 900) + '"><div class="note">Наведите камеру телефона, когда пришли на работу' +
-      '<span class="kz">Жұмысқа келгенде телефон камерасын бағыттаңыз</span></div></div>' +
-      '<div class="print-poster">' + brand + '<div class="word out">ВЫХОД<span class="kz">ШЫҒУ</span></div>' +
+      '<span class="uz">Ishga kelganingizda telefon kamerasini qarating</span></div></div>' +
+      '<div class="print-poster">' + brand + '<div class="word out">ВЫХОД<span class="uz">CHIQISH</span></div>' +
       '<img src="' + qrDataUrl(linkOut(), 900) + '"><div class="note">Наведите камеру телефона, когда уходите' +
-      '<span class="kz">Жұмыстан кетерде телефон камерасын бағыттаңыз</span></div></div>');
+      '<span class="uz">Ishdan ketayotganingizda telefon kamerasini qarating</span></div></div>');
   },
   "download-posters": function () {
     downloadDataUrl(qrDataUrl(linkIn(), 900), "qr-vhod.png");
@@ -697,7 +746,7 @@ var actions = {
       return '<div class="print-badge"><img src="' + qrDataUrl(linkReg(e), 500) + '">' +
         '<div class="nm">' + esc(e.name) + '</div><div class="cd">' + esc(e.code) + "</div>" +
         '<div class="tt">Личный код. Отсканируйте камерой своего телефона один раз' +
-        '<span class="kz">Жеке код. Өз телефоныңыздың камерасымен бір рет сканерлеңіз</span></div></div>';
+        '<span class="uz">Shaxsiy kod. Oʻz telefoningiz kamerasi bilan bir marta skanerlang</span></div></div>';
     }).join("") + "</div>");
   },
   "download-all": function () {
@@ -720,13 +769,15 @@ var actions = {
   "save-settings": async function () {
     var lat = $("#setLat").value.trim().replace(",", "."), lng = $("#setLng").value.trim().replace(",", ".");
     if ((lat || lng) && (isNaN(Number(lat)) || isNaN(Number(lng)) || !lat || !lng)) return toast("Проверьте широту и долготу");
+    var sched;
+    try { sched = scheduleValue(); } catch (e) { return toast(e.message); }
+    if (!sched) return toast("Отметьте хотя бы один рабочий день");
     try {
       var r = await admin({
         action: "saveSettings", lat: lat, lng: lng,
         radius: $("#setRadius").value || 100,
-        workStart: $("#setStart").value, workEnd: $("#setEnd").value,
         lunchMinutes: $("#setLunch").value || 0, lateTolerance: $("#setLate").value || 0,
-        workDays: workDaysValue(),
+        schedule: sched, workDays: sched.split(";").map(function (x) { return x.charAt(0); }).join(""),
         tgOutZone: $("#tgOutZone").checked ? "1" : "0", tgAbsent: $("#tgAbsent").checked ? "1" : "0", tgDaily: $("#tgDaily").checked ? "1" : "0"
       });
       S.settings = r.settings; renderSettings();
@@ -759,6 +810,11 @@ document.addEventListener("click", function (ev) {
 });
 document.addEventListener("change", function (ev) {
   var t = ev.target;
+  if (t.dataset && t.dataset.schedOn) {
+    var k = t.dataset.schedOn;
+    $('[data-sched-start="' + k + '"]').disabled = !t.checked;
+    $('[data-sched-end="' + k + '"]').disabled = !t.checked;
+  }
   if (t.id === "repFrom" && t.value) { rep.from = parseDay(t.value); if (rep.to < rep.from) rep.to = rep.from; renderReport(); showReport(false); }
   if (t.id === "repTo" && t.value) { rep.to = parseDay(t.value); if (rep.to < rep.from) rep.from = rep.to; renderReport(); showReport(false); }
   if (t.id === "repEmp") { rep.emp = t.value; renderReport(); }
@@ -779,6 +835,26 @@ function brokenText(p) {
 }
 
 /* ================= табель Excel ================= */
+/** Геометка одной отметки словами: подтверждена / не подтверждена / нет геопозиции … */
+function geoText(r) {
+  if (!r) return "";
+  var d = r.distance !== null && r.distance !== undefined && r.distance !== "" ? " · " + r.distance + " м" : "";
+  if (r.zone === "в зоне") return "подтверждена" + d;
+  if (r.zone === "вне зоны") return "НЕ подтверждена" + d;
+  if (r.zone === "без координат") return "НЕ подтверждена · нет геопозиции";
+  if (r.zone === "вручную") return "вручную (администратор)";
+  if (r.zone === "не настроена") return "геозона не была настроена";
+  return "";
+}
+/** Итог по смене: подтверждена, только если все отметки смены сделаны в зоне. */
+function geoShift(p) {
+  var list = [p.in, p.broken === "auto" ? null : p.out].filter(Boolean);
+  if (!list.length) return "";
+  if (list.some(function (r) { return r.zone === "вне зоны" || r.zone === "без координат"; })) return "НЕ подтверждена";
+  if (list.every(function (r) { return r.zone === "в зоне"; })) return "подтверждена";
+  if (list.some(function (r) { return r.zone === "вручную"; })) return "вручную";
+  return "не проверялась";
+}
 var MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 async function exportXlsx() {
   if (!window.XLSX) throw new Error("Модуль Excel не загрузился — обновите страницу");
@@ -789,8 +865,7 @@ async function exportXlsx() {
   toast("Готовим табель за " + MONTHS[m].toLowerCase() + "…");
   var recs = (await admin({ action: "read", from: first.toISOString(), to: last.toISOString() })).rows || [];
   var pairs = pairsFor(recs);
-  var workDays = String(S.settings.workDays || "12345");
-  var isOff = function (d) { var wd = new Date(y, m, d).getDay(); return workDays.indexOf(String(wd === 0 ? 7 : wd)) < 0; };
+  var isOff = function (d) { return !schedFor(new Date(y, m, d)); };
   var WD = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 
   var codes = S.employees.map(function (e) { return e.code; });
@@ -800,12 +875,12 @@ async function exportXlsx() {
   var head = ["№", "Сотрудник", "Код"];
   var headStyled = head.map(function (h) { return { v: h, s: 1 }; });
   for (var d = 1; d <= nDays; d++) headStyled.push({ v: d + "\n" + WD[new Date(y, m, d).getDay()], s: isOff(d) ? 3 : 1 });
-  ["Дней", "Часов", "Опозданий", "Без пары"].forEach(function (h) { headStyled.push({ v: h, s: 1 }); });
+  ["Дней", "Часов", "Опозданий", "Без пары", "Геометка не подтв."].forEach(function (h) { headStyled.push({ v: h, s: 1 }); });
 
   var rows = [
     [{ v: "Табель учёта рабочего времени — " + MONTHS[m] + " " + y, s: 5 }],
-    [{ v: "Рабочее время " + S.settings.workStart + "–" + S.settings.workEnd + ", обед " + (S.settings.lunchMinutes || 0) +
-      " мин (вычитается из смен длиннее 6 ч), опоздание — позже " + S.settings.workStart + " + " + (S.settings.lateTolerance || 0) + " мин. Сформировано " +
+    [{ v: "График: " + scheduleText() + ". Обед " + (S.settings.lunchMinutes || 0) +
+      " мин (вычитается из смен длиннее 6 ч), опоздание — позже начала дня + " + (S.settings.lateTolerance || 0) + " мин. Сформировано " +
       dmy(new Date()) + " " + hhmm(new Date()), s: 7 }],
     [],
     headStyled
@@ -813,13 +888,14 @@ async function exportXlsx() {
   var dayTotals = new Array(nDays + 1).fill(0), grand = 0;
   codes.forEach(function (code, idx) {
     var own = pairs.filter(function (p) { return p.code === code; });
-    var hours = {}, broken = {}, daysSet = {}, late = 0, bad = 0, total = 0;
+    var hours = {}, broken = {}, daysSet = {}, late = 0, bad = 0, total = 0, geoBad = 0;
     own.forEach(function (p) {
       var dd = new Date((p.in || p.out).ts).getDate();
       if (p.in && p.out && !p.broken) { var h = hoursOf(p); hours[dd] = (hours[dd] || 0) + h; total += h; }
       if (p.in) daysSet[dd] = 1;
       if (p.broken === "no-in" || p.broken === "no-out" || p.broken === "auto") { broken[dd] = 1; bad++; }
       if (isLate(p)) late++;
+      if (geoShift(p) === "НЕ подтверждена") geoBad++;
     });
     var row = [{ v: idx + 1, s: 0 }, { v: nameOf(code), s: 9 }, { v: code, s: 0 }];
     for (var d2 = 1; d2 <= nDays; d2++) {
@@ -829,32 +905,37 @@ async function exportXlsx() {
       else row.push({ v: hv, s: isOff(d2) ? 4 : 2 });
     }
     grand += total;
-    row.push({ v: Object.keys(daysSet).length, s: 0 }, { v: Math.round(total * 10) / 10, s: 6 }, { v: late, s: 0 }, { v: bad, s: bad ? 8 : 0 });
+    row.push({ v: Object.keys(daysSet).length, s: 0 }, { v: Math.round(total * 10) / 10, s: 6 }, { v: late, s: 0 }, { v: bad, s: bad ? 8 : 0 }, { v: geoBad, s: geoBad ? 8 : 0 });
     rows.push(row);
   });
   var tot = [{ v: "", s: 9 }, { v: "Итого", s: 9 }, { v: "", s: 9 }];
   for (var d3 = 1; d3 <= nDays; d3++) tot.push({ v: dayTotals[d3] ? Math.round(dayTotals[d3] * 10) / 10 : null, s: 6 });
   tot.push({ v: "", s: 9 }, { v: Math.round(grand * 10) / 10, s: 6 });
-  rows.push(tot, [], [{ v: "Числа — отработанные часы. «?» — нет входа или выхода, нужна проверка. Закрашены выходные дни.", s: 7 }]);
+  rows.push(tot, [], [{ v: "Числа — отработанные часы. «?» — нет входа или выхода, нужна проверка. Закрашены выходные дни.", s: 7 }],
+    [{ v: "Геометка подтверждена — отметка сделана не дальше " + (S.settings.radius || 100) + " м от рабочего места (" +
+      (S.settings.lat !== null && S.settings.lat !== undefined ? S.settings.lat + ", " + S.settings.lng : "координаты не заданы") +
+      "). Подробности по каждой смене — на листе «Смены».", s: 7 }]);
   var cols = [5, 28, 10];
   for (var d4 = 1; d4 <= nDays; d4++) cols.push(5.5);
-  cols.push(7, 8, 11, 9);
+  cols.push(7, 8, 11, 9, 12);
 
-  var shiftRows = [["Дата", "Сотрудник", "Код", "Вход", "Зона входа", "Выход", "Зона выхода", "Часы", "Опоздание", "Замечание", "Примечание"]
+  var shiftRows = [["Дата", "Сотрудник", "Код", "Вход", "Геометка входа", "Выход", "Геометка выхода", "Геометка смены", "Часы", "Опоздание", "Замечание", "Примечание"]
     .map(function (h) { return { v: h, s: 1 }; })];
   pairs.slice().sort(function (a, b) { return a.day === b.day ? nameOf(a.code).localeCompare(nameOf(b.code), "ru") : a.day < b.day ? -1 : 1; })
     .forEach(function (p) {
       var notes = [p.in && p.in.note, p.out && p.out.note].filter(Boolean).join("; ");
       shiftRows.push([dmy((p.in || p.out).ts), nameOf(p.code), p.code,
-        p.in ? hhmm(p.in.ts) : "", p.in ? p.in.zone : "",
-        p.out && p.broken !== "auto" ? hhmm(p.out.ts) : "", p.out && p.broken !== "auto" ? p.out.zone : "",
+        p.in ? hhmm(p.in.ts) : "", { v: geoText(p.in), s: /НЕ/.test(geoText(p.in)) ? 8 : 0 },
+        p.out && p.broken !== "auto" ? hhmm(p.out.ts) : "",
+        { v: p.broken === "auto" ? "" : geoText(p.out), s: p.broken !== "auto" && /НЕ/.test(geoText(p.out)) ? 8 : 0 },
+        { v: geoShift(p), s: geoShift(p) === "НЕ подтверждена" ? 8 : 0 },
         { v: p.in && p.out && !p.broken ? Math.round(hoursOf(p) * 100) / 100 : null, s: 2 },
         isLate(p) ? "да" : "", { v: brokenText(p), s: p.broken && p.broken !== "open" ? 8 : 0 }, notes]);
     });
 
   var blob = XLSX.build([
     { name: "Табель", rows: rows, cols: cols, freeze: { row: 4, col: 2 } },
-    { name: "Смены", rows: shiftRows, cols: [11, 28, 10, 8, 14, 8, 14, 7, 11, 30, 50], freeze: { row: 1, col: 0 } }
+    { name: "Смены", rows: shiftRows, cols: [11, 28, 10, 8, 26, 8, 26, 17, 7, 11, 30, 50], freeze: { row: 1, col: 0 } }
   ]);
   var url = URL.createObjectURL(blob);
   var a = document.createElement("a");
@@ -877,7 +958,7 @@ function punchForm(code, day) {
     '<div class="grid3" style="margin-top:8px">' +
       '<label class="field">Тип<select class="input" id="pfType"><option value="in">Вход</option><option value="out">Выход</option></select></label>' +
       '<label class="field">Дата<input class="input" type="date" id="pfDate" value="' + esc(day || nowLocalDate()) + '" max="' + nowLocalDate() + '"></label>' +
-      '<label class="field">Время<input class="input" type="time" id="pfTime" value="' + esc(S.settings.workEnd || "18:00") + '"></label>' +
+      '<label class="field">Время<input class="input" type="time" id="pfTime" value="' + esc((schedFor(new Date()) || { end: "17:00" }).end) + '"></label>' +
     "</div>" +
     '<label class="field" style="margin-top:8px">Причина<input class="input" id="pfNote" maxlength="200" placeholder="Например: забыл отметить выход"></label>' +
     '<button class="btn primary block" style="margin-top:10px" data-action="punch-save">Добавить</button></div>';
