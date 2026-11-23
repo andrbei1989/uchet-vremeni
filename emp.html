@@ -96,6 +96,8 @@ h1 .uz{font-size:16px;font-weight:600}
    Все тексты — на русском и узбекском (латиница). */
 
 var ME_KEY = "tt4_me";
+/* основной сервер: короткие QR-коды не содержат его адреса */
+var DEFAULT_SERVER = "https://script.google.com/macros/s/AKfycby5_KTl2-IpW_wwsVHOQJ9Pb1IEfW_BpI2LPGkfRcZuRUk9XyasibLjQX-TkBq4W8xP/exec";
 
 function qs(name) {
   var m = new RegExp("[?&]" + name + "=([^&#]*)").exec(location.search);
@@ -280,7 +282,7 @@ async function doPunch(type, server, noGeo) {
       L("<b>Сначала отсканируйте свой личный код регистрации.</b><br>Его выдаёт руководитель один раз. После этого вход и выход отмечаются сканированием QR у двери.",
         "<b>Avval shaxsiy roʻyxatdan oʻtish kodingizni skanerlang.</b><br>Uni rahbar bir marta beradi. Shundan soʻng kirish va chiqish eshik yonidagi QR-kodni skanerlash orqali belgilanadi."));
   }
-  server = validServer(server) ? server : me.server;
+  server = validServer(server) ? server : (validServer(me.server) ? me.server : DEFAULT_SERVER);
 
   var coords = null;
   if (!noGeo) {
@@ -379,6 +381,7 @@ function showDone(meta, r) {
 
 /* ================= запуск ================= */
 var P = { code: qs("r").toUpperCase(), key: qs("k").toUpperCase(), type: qs("t"), server: qs("s") };
+if (!validServer(P.server) && (P.code || !P.type)) P.server = DEFAULT_SERVER;
 
 function boot() {
   /* убираем ключ из адресной строки и истории браузера */

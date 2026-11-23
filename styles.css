@@ -115,17 +115,17 @@ nav.bottom button span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis
   .print-poster .word{font-size:64px;font-weight:800;letter-spacing:.1em;margin:6mm 0 4mm}
   .print-poster .word.in{color:#16a34a}
   .print-poster .word.out{color:#2563eb}
-  .print-poster img{width:120mm;height:120mm;image-rendering:pixelated}
+  .print-poster img{width:130mm;height:130mm;image-rendering:pixelated}
   .print-poster .note{margin-top:6mm;color:#475569;font-size:13px}
   .badge-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6mm}
   .print-badge{border:1px solid #cbd5e1;border-radius:6mm;padding:4mm;text-align:center;page-break-inside:avoid}
-  .print-badge img{width:33mm;height:33mm;image-rendering:pixelated}
+  .print-badge img{width:45mm;height:45mm;image-rendering:pixelated}
   .print-badge .nm{font-size:12px;font-weight:700;margin-top:2mm}
   .print-badge .cd{font-size:10px;color:#64748b}
   .print-badge .tt{font-size:9px;color:#94a3b8;margin-top:1mm}
   .print-poster .uz,.print-badge .uz{display:block}
   .print-poster .word .uz{font-size:44px;opacity:.8;letter-spacing:.08em}
   .print-poster .note .uz{margin-top:2mm}
-  .print-poster img{width:110mm;height:110mm}
+  .print-poster img{width:130mm;height:130mm}
 }
 @media (max-width:400px){.qr-grid{grid-template-columns:1fr}.kpi{grid-template-columns:1fr 1fr}.grid3{grid-template-columns:1fr 1fr}}

@@ -114,18 +114,39 @@ function qrDataUrl(text, size) {
   var key = text + "@" + size;
   if (qrCache[key]) return qrCache[key];
   try {
+    /* Чтобы код читали и простые камеры: чёрные квадраты ровно по пикселям (без размытия)
+       и обязательное белое поле в 4 модуля вокруг кода. */
+    var opts = { text: text, colorDark: "#000000", colorLight: "#ffffff", correctLevel: window.QRCode.CorrectLevel.M };
     var holder = document.createElement("div");
-    new window.QRCode(holder, { text: text, width: size, height: size, colorDark: "#0f172a", colorLight: "#ffffff", correctLevel: window.QRCode.CorrectLevel.M });
+    opts.width = opts.height = size;
+    var q = new window.QRCode(holder, opts);
+    var count = q._oQRCode && q._oQRCode.getModuleCount ? q._oQRCode.getModuleCount() : 0;
     var cv = holder.querySelector("canvas");
+    if (count) {
+      var k = Math.max(4, Math.round(size / (count + 8)));
+      holder = document.createElement("div");
+      opts.width = opts.height = count * k;
+      new window.QRCode(holder, opts);
+      var inner = holder.querySelector("canvas");
+      cv = document.createElement("canvas");
+      cv.width = cv.height = (count + 8) * k;
+      var ctx = cv.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(inner, 4 * k, 4 * k);
+    }
     var url = cv ? cv.toDataURL("image/png") : null;
     if (url) qrCache[key] = url;
     return url;
   } catch (e) { return null; }
 }
 function empBase() { return location.origin + location.pathname.replace(/[^/]*$/, "") + "emp.html"; }
-function linkIn() { return empBase() + "?t=in&s=" + encodeURIComponent(AUTH.server); }
-function linkOut() { return empBase() + "?t=out&s=" + encodeURIComponent(AUTH.server); }
-function linkReg(e) { return empBase() + "?r=" + encodeURIComponent(e.code) + "&k=" + encodeURIComponent(e.key) + "&s=" + encodeURIComponent(AUTH.server); }
+/* Адрес сервера кладём в QR, только если он не основной: короткая ссылка = крупные точки = код читается легче */
+function serverParam() { return AUTH.server === DEFAULT_SERVER ? "" : "&s=" + encodeURIComponent(AUTH.server); }
+function linkIn() { return empBase() + "?t=in" + serverParam(); }
+function linkOut() { return empBase() + "?t=out" + serverParam(); }
+function linkReg(e) { return empBase() + "?r=" + encodeURIComponent(e.code) + "&k=" + encodeURIComponent(e.key) + serverParam(); }
 function qrImg(text, size) {
   var url = qrDataUrl(text, size);
   if (!url) return '<div class="empty">QR-библиотека не загрузилась — проверьте интернет и обновите страницу</div>';
