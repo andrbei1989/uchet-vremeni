@@ -732,26 +732,14 @@ var actions = {
     if (blocked) go();
     else ask("Заблокировать?", esc(e.name) + " не сможет отмечаться, пока вы не разблокируете. Отметки в таблице сохранятся.", "Заблокировать", go, true);
   },
-  "delete-emp": function (el) {
+  "delete-emp": async function (el) {
     var e = findEmp(el.dataset.code);
     if (!e) return;
-    openModal(sheetHead("Удалить сотрудника?", e.name + " · " + e.code) +
-      '<div class="muted" style="margin-top:10px">Сотрудник исчезнет из списка, его телефон и QR-код перестанут работать. ' +
-      "<b>Все его отметки останутся в таблице</b> — табель и Excel за прошлые дни не изменятся. Код " + esc(e.code) + " больше никому не будет выдан.<br><br>" +
-      "Отменить удаление нельзя. Если нужно только временно закрыть доступ — используйте «Заблокировать».</div>" +
-      '<label class="field" style="margin-top:12px">Чтобы подтвердить, введите код сотрудника<input class="input mono" id="delConfirm" placeholder="' + esc(e.code) + '" autocomplete="off"></label>' +
-      '<div class="col" style="margin-top:12px"><button class="btn danger" data-action="delete-emp-yes" data-code="' + esc(e.code) + '">Удалить навсегда</button>' +
-      '<button class="btn ghost" data-action="close">Отмена</button></div>');
-    setTimeout(function () { var f = $("#delConfirm"); if (f) f.focus(); }, 50);
-  },
-  "delete-emp-yes": async function (el) {
-    var code = el.dataset.code;
-    if (($("#delConfirm").value || "").trim().toUpperCase() !== code.toUpperCase()) return toast("Введите код " + code + " для подтверждения");
     el.disabled = true;
     try {
-      var r = await admin({ action: "deleteEmployee", code: code });
-      S.employees = S.employees.filter(function (x) { return x.code !== code; });
-      closeModal(); renderEmployees();
+      var r = await admin({ action: "deleteEmployee", code: e.code });
+      S.employees = S.employees.filter(function (x) { return x.code !== e.code; });
+      renderEmployees();
       toast("Удалён: " + r.name + ". Отметки сохранены в таблице.");
     } catch (err) { el.disabled = false; toast(err.message); }
   },
