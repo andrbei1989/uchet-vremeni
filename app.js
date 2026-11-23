@@ -41,7 +41,7 @@ var ERRORS = {
   already_configured: "Пароль уже задан",
   name_required: "Укажите ФИО",
   not_found: "Сотрудник не найден",
-  unknown_action: "Сервер устарел: обновите код Apps Script до версии 4",
+  unknown_action: "Сервер устарел: обновите код Apps Script до последней версии",
   busy: "Сервер занят, попробуйте ещё раз",
   bad_time: "Неверная дата или время",
   future_time: "Нельзя добавить отметку в будущем",
@@ -438,6 +438,7 @@ function renderEmployees() {
         '<button class="btn sm ghost" data-action="rename" data-code="' + esc(e.code) + '">Переименовать</button>' +
         '<button class="btn sm ghost" data-action="regen" data-code="' + esc(e.code) + '">' + (e.bound ? "Сменить телефон" : "Новый QR") + "</button>" +
         '<button class="btn sm ' + (blocked ? "ghost" : "danger") + '" data-action="toggle-block" data-code="' + esc(e.code) + '">' + (blocked ? "Разблокировать" : "Заблокировать") + "</button>" +
+        '<button class="btn sm danger" data-action="delete-emp" data-code="' + esc(e.code) + '">Удалить</button>' +
       "</div></div>";
   }).join("");
 }
@@ -709,6 +710,29 @@ var actions = {
     };
     if (blocked) go();
     else ask("Заблокировать?", esc(e.name) + " не сможет отмечаться, пока вы не разблокируете. Отметки в таблице сохранятся.", "Заблокировать", go, true);
+  },
+  "delete-emp": function (el) {
+    var e = findEmp(el.dataset.code);
+    if (!e) return;
+    openModal(sheetHead("Удалить сотрудника?", e.name + " · " + e.code) +
+      '<div class="muted" style="margin-top:10px">Сотрудник исчезнет из списка, его телефон и QR-код перестанут работать. ' +
+      "<b>Все его отметки останутся в таблице</b> — табель и Excel за прошлые дни не изменятся. Код " + esc(e.code) + " больше никому не будет выдан.<br><br>" +
+      "Отменить удаление нельзя. Если нужно только временно закрыть доступ — используйте «Заблокировать».</div>" +
+      '<label class="field" style="margin-top:12px">Чтобы подтвердить, введите код сотрудника<input class="input mono" id="delConfirm" placeholder="' + esc(e.code) + '" autocomplete="off"></label>' +
+      '<div class="col" style="margin-top:12px"><button class="btn danger" data-action="delete-emp-yes" data-code="' + esc(e.code) + '">Удалить навсегда</button>' +
+      '<button class="btn ghost" data-action="close">Отмена</button></div>');
+    setTimeout(function () { var f = $("#delConfirm"); if (f) f.focus(); }, 50);
+  },
+  "delete-emp-yes": async function (el) {
+    var code = el.dataset.code;
+    if (($("#delConfirm").value || "").trim().toUpperCase() !== code.toUpperCase()) return toast("Введите код " + code + " для подтверждения");
+    el.disabled = true;
+    try {
+      var r = await admin({ action: "deleteEmployee", code: code });
+      S.employees = S.employees.filter(function (x) { return x.code !== code; });
+      closeModal(); renderEmployees();
+      toast("Удалён: " + r.name + ". Отметки сохранены в таблице.");
+    } catch (err) { el.disabled = false; toast(err.message); }
   },
   "show-qr": function (el) {
     var e = findEmp(el.dataset.code);

@@ -1,6 +1,6 @@
 /**
  * Учёт рабочего времени — сервер на Google Apps Script.
- * Версия 6.
+ * Версия 7.
  *
  * Установка (один раз):
  * 1. Создайте Google Таблицу.
@@ -20,7 +20,7 @@
  * (Настройки → Автоматика), когда доступ уже разрешён.
  */
 
-var VERSION = 6;
+var VERSION = 7;
 
 var SHEET_EMP = 'Сотрудники';
 var SHEET_ATT = 'Отметки';
@@ -48,7 +48,7 @@ var PUBLIC_ACTIONS = { ping: 1, setup: 1, register: 1, punch: 1 };
 var ADMIN_ACTIONS = {
   login: 1, changePassword: 1, employees: 1, addEmployee: 1, updateEmployee: 1,
   regenKey: 1, board: 1, read: 1, getSettings: 1, saveSettings: 1,
-  addPunch: 1, voidPunch: 1, backupNow: 1, tgLink: 1, tgTest: 1, installAutomation: 1
+  addPunch: 1, voidPunch: 1, deleteEmployee: 1, backupNow: 1, tgLink: 1, tgTest: 1, installAutomation: 1
 };
 
 function doGet(e) {
@@ -86,6 +86,7 @@ function ttRoute(a, p) {
     if (a === 'addEmployee') return ttAddEmployee(p);
     if (a === 'updateEmployee') return ttUpdateEmployee(p);
     if (a === 'regenKey') return ttRegenKey(p);
+    if (a === 'deleteEmployee') return ttDeleteEmployee(p);
     if (a === 'board') return ttBoard();
     if (a === 'read') return ttRead(p);
     if (a === 'getSettings') return { ok: true, settings: ttSettingsFull() };
@@ -286,15 +287,33 @@ function ttEmployeeList() {
 function ttAddEmployee(p) {
   var name = ttStr(p.name).slice(0, 80);
   if (!name) return { ok: false, error: 'name_required' };
-  var max = 0;
-  ttRows(ttEmp()).forEach(function (r) {
-    var m = /^EMP-(\d+)$/i.exec(ttStr(r[E_CODE]));
+  /* код никогда не выдаётся повторно: учитываем текущих, удалённых (по отметкам) и счётчик */
+  var max = Number(ttProps().getProperty('emp_seq') || 0);
+  var bump = function (code) {
+    var m = /^EMP-(\d+)$/i.exec(ttStr(code));
     if (m) max = Math.max(max, Number(m[1]));
-  });
-  var code = 'EMP-' + ('00' + (max + 1)).slice(-3);
+  };
+  ttRows(ttEmp()).forEach(function (r) { bump(r[E_CODE]); });
+  ttRows(ttAtt()).forEach(function (r) { bump(r[A_CODE]); });
+  var n = max + 1;
+  var code = 'EMP-' + (n < 1000 ? ('00' + n).slice(-3) : String(n));
   var row = [code, name, ttRand(8), ST_ACTIVE, '', '', '', new Date().toISOString()];
   ttEmp().appendRow(row);
+  ttProps().setProperty('emp_seq', String(n));
   return { ok: true, employee: ttEmpPublic(row) };
+}
+
+/** Удаление сотрудника: строка из листа «Сотрудники» убирается, его отметки остаются для табеля. */
+function ttDeleteEmployee(p) {
+  var f = ttFindEmp(p.code);
+  if (!f) return { ok: false, error: 'not_found' };
+  var m = /^EMP-(\d+)$/i.exec(ttStr(f.r[E_CODE]));
+  if (m) {
+    var props = ttProps();
+    props.setProperty('emp_seq', String(Math.max(Number(props.getProperty('emp_seq') || 0), Number(m[1]))));
+  }
+  f.sh.deleteRow(f.row);
+  return { ok: true, code: ttStr(f.r[E_CODE]), name: ttStr(f.r[E_NAME]) };
 }
 function ttUpdateEmployee(p) {
   var f = ttFindEmp(p.code);
