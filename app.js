@@ -116,7 +116,7 @@ function qrDataUrl(text, size) {
   try {
     /* Чтобы код читали и простые камеры: чёрные квадраты ровно по пикселям (без размытия)
        и обязательное белое поле в 4 модуля вокруг кода. */
-    var opts = { text: text, colorDark: "#000000", colorLight: "#ffffff", correctLevel: window.QRCode.CorrectLevel.M };
+    var opts = { text: text, colorDark: "#000000", colorLight: "#ffffff", correctLevel: window.QRCode.CorrectLevel.L };
     var holder = document.createElement("div");
     opts.width = opts.height = size;
     var q = new window.QRCode(holder, opts);
