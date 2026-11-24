@@ -115,17 +115,17 @@ nav.bottom button span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis
   .print-poster .word{font-size:64px;font-weight:800;letter-spacing:.1em;margin:6mm 0 4mm}
   .print-poster .word.in{color:#16a34a}
   .print-poster .word.out{color:#2563eb}
-  .print-poster img{width:150mm;height:150mm;image-rendering:pixelated}
+  /* QR вместе с белым полем: постер 160 мм, карточка 64 мм. Только чёрный по белому, без сглаживания */
+  .print-poster img{width:160mm;height:160mm;image-rendering:pixelated;filter:none;opacity:1}
   .print-poster .note{margin-top:6mm;color:#475569;font-size:13px}
   .badge-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6mm}
   .print-badge{border:1px solid #cbd5e1;border-radius:6mm;padding:4mm;text-align:center;page-break-inside:avoid}
-  .print-badge img{width:60mm;height:60mm;image-rendering:pixelated}
+  .print-badge img{width:64mm;height:64mm;image-rendering:pixelated;filter:none;opacity:1}
   .print-badge .nm{font-size:12px;font-weight:700;margin-top:2mm}
   .print-badge .cd{font-size:10px;color:#64748b}
   .print-badge .tt{font-size:9px;color:#94a3b8;margin-top:1mm}
   .print-poster .uz,.print-badge .uz{display:block}
   .print-poster .word .uz{font-size:44px;opacity:.8;letter-spacing:.08em}
   .print-poster .note .uz{margin-top:2mm}
-  .print-poster img{width:150mm;height:150mm}
 }
 @media (max-width:400px){.qr-grid{grid-template-columns:1fr}.kpi{grid-template-columns:1fr 1fr}.grid3{grid-template-columns:1fr 1fr}}

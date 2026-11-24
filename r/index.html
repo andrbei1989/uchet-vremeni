@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Привязка · Bogʻlash</title>
+<!-- Короткая ссылка из личного QR: r/?001ABCD2345 = сотрудник EMP-001, ключ ABCD2345.
+     Переводит на emp.html?r=EMP-001&k=ABCD2345 (остальные параметры, например &s=, сохраняются). -->
+<script>
+(function () {
+  var q = location.search.replace(/^\?/, "");
+  var m = /^(\d+)([A-Za-z0-9]{8})(&|$)/.exec(q);
+  var to = m ? "?r=EMP-" + m[1] + "&k=" + m[2] + (m[3] ? "&" + q.slice(m[0].length) : "") : (q ? "?" + q : "");
+  location.replace("../emp.html" + to);
+})();
+</script>
+</head><body><p><a href="../emp.html">Открыть · Ochish</a></p></body></html>

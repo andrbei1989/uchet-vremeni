@@ -108,45 +108,38 @@ function findEmp(code) { return S.employees.filter(function (e) { return e.code 
 
 /* ================= QR ================= */
 var qrCache = {};
+/* Код строит qr.js: самая маленькая версия при коррекции L, затем коррекция поднимается,
+   пока помещается в тот же размер. Рисуем чистым #000 на #fff, целое число пикселей на модуль,
+   белое поле 4 модуля. */
 function qrDataUrl(text, size) {
   size = size || 240;
-  if (!window.QRCode) return null;
+  if (!window.TTQR) return null;
   var key = text + "@" + size;
   if (qrCache[key]) return qrCache[key];
   try {
-    /* Чтобы код читали и простые камеры: чёрные квадраты ровно по пикселям (без размытия)
-       и обязательное белое поле в 4 модуля вокруг кода. */
-    var opts = { text: text, colorDark: "#000000", colorLight: "#ffffff", correctLevel: window.QRCode.CorrectLevel.L };
-    var holder = document.createElement("div");
-    opts.width = opts.height = size;
-    var q = new window.QRCode(holder, opts);
-    var count = q._oQRCode && q._oQRCode.getModuleCount ? q._oQRCode.getModuleCount() : 0;
-    var cv = holder.querySelector("canvas");
-    if (count) {
-      var k = Math.max(4, Math.round(size / (count + 8)));
-      holder = document.createElement("div");
-      opts.width = opts.height = count * k;
-      new window.QRCode(holder, opts);
-      var inner = holder.querySelector("canvas");
-      cv = document.createElement("canvas");
-      cv.width = cv.height = (count + 8) * k;
-      var ctx = cv.getContext("2d");
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, cv.width, cv.height);
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(inner, 4 * k, 4 * k);
-    }
-    var url = cv ? cv.toDataURL("image/png") : null;
-    if (url) qrCache[key] = url;
+    var q = window.TTQR.encode(text);
+    var url = window.TTQR.toCanvas(q, Math.max(2, Math.round(size / (q.size + 8))), 4).toDataURL("image/png");
+    qrCache[key] = url;
     return url;
   } catch (e) { return null; }
 }
-function empBase() { return location.origin + location.pathname.replace(/[^/]*$/, "") + "emp.html"; }
-/* Адрес сервера кладём в QR, только если он не основной: короткая ссылка = крупные точки = код читается легче */
-function serverParam() { return AUTH.server === DEFAULT_SERVER ? "" : "&s=" + encodeURIComponent(AUTH.server); }
-function linkIn() { return empBase() + "?t=in" + serverParam(); }
-function linkOut() { return empBase() + "?t=out" + serverParam(); }
-function linkReg(e) { return empBase() + "?r=" + encodeURIComponent(e.code) + "&k=" + encodeURIComponent(e.key) + serverParam(); }
+function appDir() { return location.origin + location.pathname.replace(/[^/]*$/, ""); }
+function empBase() { return appDir() + "emp.html"; }
+/* Короткие ссылки для QR. Имя сайта пишем ЗАГЛАВНЫМИ: в QR это «буквенно-цифровой» режим,
+   он вдвое плотнее байтового, а браузер всё равно приводит адрес сайта к строчным.
+   «https://» и путь остаются строчными: старые Android-сканеры не открывают «HTTPS://»,
+   а путь на GitHub Pages чувствителен к регистру. */
+function shortDir() { return appDir().replace(/^(https?:\/\/)([^/]+)/i, function (_, sch, host) { return sch.toLowerCase() + host.toUpperCase(); }); }
+function isDefaultServer() { return AUTH.server === DEFAULT_SERVER; }
+/* для нестандартного сервера — прежние длинные ссылки: в них нужен адрес сервера */
+function serverParam() { return isDefaultServer() ? "" : "&s=" + encodeURIComponent(AUTH.server); }
+function linkIn() { return isDefaultServer() ? shortDir() + "i/" : empBase() + "?t=in" + serverParam(); }
+function linkOut() { return isDefaultServer() ? shortDir() + "o/" : empBase() + "?t=out" + serverParam(); }
+function linkReg(e) {
+  var m = /^EMP-(\d+)$/i.exec(e.code || "");
+  if (isDefaultServer() && m && /^[A-Z0-9]{8}$/i.test(e.key || "")) return shortDir() + "r/?" + m[1] + String(e.key).toUpperCase();
+  return empBase() + "?r=" + encodeURIComponent(e.code) + "&k=" + encodeURIComponent(e.key) + serverParam();
+}
 function qrImg(text, size) {
   var url = qrDataUrl(text, size);
   if (!url) return '<div class="empty">QR-библиотека не загрузилась — проверьте интернет и обновите страницу</div>';
